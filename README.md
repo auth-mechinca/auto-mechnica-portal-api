@@ -74,11 +74,47 @@ compatible with that; it just means "this application's objects".
 ## Getting started
 
 ```bash
-cp .env.example .env    # then set JWT_SECRET and both database URLs
+cp .env.example .env
 npm install
-npm run db:migrate
+npm run db:setup    # starts Postgres in Docker, migrates, grants
 npm run dev
 ```
+
+The defaults in `.env.example` match `docker-compose.yml`, so this works with no
+edits locally. Change `JWT_SECRET` and both passwords for anything that is not
+localhost.
+
+## Local database
+
+`docker-compose.yml` runs Postgres 17 for development only — production Postgres
+runs directly on the VPS next to the API process, which is the whole point of the
+hosting decision. The tests do not use it at all; they run against PGlite
+in-process.
+
+| Script | Does |
+|---|---|
+| `npm run db:up` | Start Postgres, wait until healthy |
+| `npm run db:setup` | `db:up` + `db:migrate` + `db:grant` — the one to run first |
+| `npm run db:grant` | Grant the app role USAGE on `app` (see below) |
+| `npm run db:psql` | psql shell as the migration role |
+| `npm run db:down` | Stop the container, keep the data |
+| `npm run db:reset` | Drop the volume and rebuild from scratch |
+
+The container mirrors the production role split rather than running everything as
+one superuser, so a privilege mistake shows up locally instead of on the VPS:
+
+- The container superuser **is** the migration role. It owns the schema and is the
+  only account with DDL rights.
+- `docker/initdb/01-roles.sh` runs once on an empty volume: it revokes `public`,
+  creates `auto_mechanica_app`, pins its `search_path` to `app`, and sets default
+  privileges so future migrations do not need a matching grant remembered by hand.
+- `docker/grant-app.sql` runs after the first migration. USAGE on a schema cannot
+  be granted before the schema exists, and migration `0000` is what creates `app`
+  — so that one grant cannot live in the init script.
+
+Verified on a fresh volume: 17 tables in `app`, none in `public`, and the app role
+can SELECT and INSERT but is denied `CREATE TABLE`, `DROP TABLE`, and any write to
+`public`.
 
 ## Layout
 

@@ -11,10 +11,17 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
+    "test": "node --import tsx --test --test-concurrency=1 --test-timeout=30000 \"test/**/*.test.ts\"",
+    "db:up": "docker compose up -d --wait",
+    "db:down": "docker compose down",
+    "db:logs": "docker compose logs -f postgres",
+    "db:psql": "docker compose exec postgres psql -U auto_mechanica_migrator -d auto_mechanica",
+    "db:setup": "npm run db:up && npm run db:migrate && npm run db:grant",
+    "db:grant": "docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U auto_mechanica_migrator -d auto_mechanica < docker/grant-app.sql",
+    "db:reset": "docker compose down -v && npm run db:setup",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "db:studio": "drizzle-kit studio",
-    "test": "node --import tsx --test --test-concurrency=1 --test-timeout=30000 \"test/**/*.test.ts\""
+    "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
