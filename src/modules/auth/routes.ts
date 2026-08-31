@@ -1,11 +1,11 @@
 import { Router } from 'express';
 import { eq, sql } from 'drizzle-orm';
-import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { getDb } from '../../db/client.js';
 import { users } from '../../db/schema/index.js';
 import { ApiError, asyncHandler } from '../../lib/http.js';
 import { requireAuth, signToken } from '../../middleware/auth.js';
+import { verifyPassword } from '../../lib/password.js';
 
 export const authRouter = Router();
 
@@ -25,10 +25,9 @@ authRouter.post(
       .where(sql`lower(${users.email}) = lower(${email})`)
       .limit(1);
 
-    // Same message and roughly the same work either way, so the response cannot
-    // be used to enumerate which accounts exist.
-    const hash = user?.passwordHash ?? '$2b$12$invalidinvalidinvalidinvalidinvalidinvalidinvalidinvalidin';
-    const ok = await bcrypt.compare(password, hash);
+    // Same message and the same work either way, so neither the response nor how
+    // long it took can be used to enumerate which accounts exist.
+    const ok = await verifyPassword(password, user?.passwordHash);
 
     if (!user || !ok || !user.isActive) throw ApiError.unauthorized('Invalid email or password');
 

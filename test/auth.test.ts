@@ -2,7 +2,7 @@ import './helpers/env.js';
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import request from 'supertest';
-import bcrypt from 'bcryptjs';
+import { hashPassword } from '../src/lib/password.js';
 import type { Server } from 'node:http';
 import { createApp } from '../src/app.js';
 import { createTestDb } from './helpers/db.js';
@@ -18,7 +18,7 @@ before(async () => {
   server = createApp().listen(0);
 
   // The four demo logins from Section 2.
-  const passwordHash = await bcrypt.hash('demo1234', 10);
+  const passwordHash = await hashPassword('demo1234');
   await db.insert(users).values([
     { email: 'sales@demo', fullName: 'Ama Sales', role: 'sales', passwordHash },
     { email: 'purchasing@demo', fullName: 'Kofi Purchasing', role: 'purchasing', passwordHash },
