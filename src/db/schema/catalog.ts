@@ -94,8 +94,10 @@ export const priceHistory = appSchema.table(
   (t) => [index('price_history_part_idx').on(t.partId, t.createdAt)],
 );
 
-/** Global key/value settings. For the demo this holds exactly one thing that
- *  matters: `default_margin_pct`. Per-category overrides are out of scope. */
+/** Global key/value settings. Two keys matter for the demo:
+ *  `default_margin_pct`, and `default_payment_terms_days` — how long every
+ *  customer gets to pay, which is what an invoice's due date is computed from.
+ *  Per-customer terms and per-category margin overrides are both out of scope. */
 export const settings = appSchema.table('settings', {
   key: text('key').primaryKey(),
   value: text('value').notNull(),

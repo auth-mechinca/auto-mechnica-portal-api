@@ -23,11 +23,23 @@ export const salesInvoices = appSchema.table(
     /** Null for a walk-in cash sale with no account. */
     customerId: uuid('customer_id').references(() => customers.id, { onDelete: 'restrict' }),
     invoiceDate: date('invoice_date').notNull(),
+    /** Stamped when the invoice is raised: invoice_date plus the shop's
+     *  `default_payment_terms_days` setting. Stored rather
+     *  than derived on read, for the same reason as `unit_price` below — later
+     *  changing a customer's terms must not silently move the due date of
+     *  invoices already issued, and ageing would be rewritten with it.
+     *
+     *  A walk-in is settled at the till, so its due date is the invoice date. */
+    dueDate: date('due_date').notNull(),
     totalAmount: ghs('total_amount').notNull(),
     soldBy: uuid('sold_by').references(() => users.id, { onDelete: 'set null' }),
     ...timestamps,
   },
-  (t) => [index('sales_invoices_customer_idx').on(t.customerId)],
+  (t) => [
+    index('sales_invoices_customer_idx').on(t.customerId),
+    // Every ageing query on the Customer Accounts screen filters on this.
+    index('sales_invoices_due_date_idx').on(t.dueDate),
+  ],
 );
 
 export const salesInvoiceLines = appSchema.table(
