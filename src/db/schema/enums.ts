@@ -18,6 +18,10 @@ export const adjustmentReason = appSchema.enum('adjustment_reason', [
   'count_correction',
 ]);
 
+/** What wrote a `price_history` row. A receipt recomputes the suggestion on its
+ *  own; `manual` is a person saving a final price on Price Edit. */
+export const priceChangeSource = appSchema.enum('price_change_source', ['po_receipt', 'manual']);
+
 export const paymentMethod = appSchema.enum('payment_method', ['cash', 'cheque', 'momo']);
 
 /** Cash and MoMo land as 'cleared'. Cheques start 'pending' and are resolved by hand. */

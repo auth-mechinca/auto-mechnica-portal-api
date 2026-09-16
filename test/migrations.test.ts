@@ -18,7 +18,7 @@ describe('migrations', () => {
     const { rows } = await db.execute<{ count: string }>(
       sql`select count(*)::text as count from information_schema.tables where table_schema = 'app'`,
     );
-    assert.equal(rows[0]!.count, '17');
+    assert.equal(rows[0]!.count, '18');
   });
 
   it('creates nothing in the public schema', async () => {
