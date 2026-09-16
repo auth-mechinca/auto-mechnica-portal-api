@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1788024100769,
+      "tag": "0000_init_demo_schema",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1789563482885,
+      "tag": "0001_large_the_captain",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789576778411,
+      "tag": "0002_slow_sally_floyd",
+      "breakpoints": true
+    }
+  ]
+}
