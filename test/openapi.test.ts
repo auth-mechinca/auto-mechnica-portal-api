@@ -76,10 +76,11 @@ describe('the OpenAPI document', () => {
     const paths = Object.keys(doc.paths);
     assert.ok(paths.some((p) => p.startsWith('/api/auth/')));
     assert.ok(paths.some((p) => p.startsWith('/api/pos/')));
+    assert.ok(paths.some((p) => p.startsWith('/api/backoffice/purchase-orders')));
 
     // These routers are mounted and enforce roles but have no handlers. Once one
     // gains an endpoint, this test should be updated along with the document.
-    for (const unimplemented of ['/api/ims/', '/api/financial/', '/api/backoffice/']) {
+    for (const unimplemented of ['/api/ims/', '/api/financial/']) {
       assert.ok(
         !paths.some((p) => p.startsWith(unimplemented)),
         `${unimplemented} has no handlers yet — documenting it would promise a 404`,

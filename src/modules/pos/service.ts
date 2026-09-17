@@ -5,7 +5,6 @@ import {
   cheques,
   customers,
   inventoryBalances,
-  locations,
   momoTransactions,
   parts,
   paymentAllocations,
@@ -13,10 +12,10 @@ import {
   prices,
   salesInvoiceLines,
   salesInvoices,
-  settings,
   stockMovements,
   users,
 } from '../../db/schema/index.js';
+import { defaultLocationId, settingValue } from '../../db/defaults.js';
 import { ApiError } from '../../lib/http.js';
 import { compare, multiply, sum } from '../../lib/money.js';
 
@@ -128,25 +127,6 @@ export const receipt = z.object({
 export type Receipt = z.infer<typeof receipt>;
 
 /* ---------------------------------------------------------------- helpers */
-
-/** The demo runs on one location. It is resolved rather than hardcoded so that
- *  adding the selector later is a change of argument, not of logic. */
-async function defaultLocationId(tx: Tx): Promise<string> {
-  const [location] = await tx
-    .select({ id: locations.id })
-    .from(locations)
-    .where(eq(locations.isActive, true))
-    .orderBy(asc(locations.createdAt))
-    .limit(1);
-
-  if (!location) throw new Error('No active location — run `npm run db:seed`');
-  return location.id;
-}
-
-async function settingValue(tx: Tx, key: string, fallback: string): Promise<string> {
-  const [row] = await tx.select().from(settings).where(eq(settings.key, key)).limit(1);
-  return row?.value ?? fallback;
-}
 
 /** Ghana keeps UTC+0 all year, so the UTC date is the shop's date. */
 const today = (): string => new Date().toISOString().slice(0, 10);

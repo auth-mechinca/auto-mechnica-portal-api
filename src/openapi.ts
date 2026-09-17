@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import * as authService from './modules/auth/service.js';
+import * as backofficeService from './modules/backoffice/service.js';
 import * as posService from './modules/pos/service.js';
 
 /** The OpenAPI document, generated from the very zod schemas the API validates
@@ -75,13 +76,19 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         '',
         '**Not yet implemented.** The IMS, Financial Core and Backoffice routers are',
         'mounted and enforce their roles, but carry no handlers. They are omitted',
-        'here rather than documented as promises.',
+        'here rather than documented as promises. Backoffice is partly implemented:',
+        'purchase orders and receiving are here, suppliers and price management are not.',
       ].join('\n'),
     },
     servers: [{ url: 'http://localhost:4000', description: 'Local development' }],
     tags: [
       { name: 'Auth', description: 'Sign in and identify the current user. Open to all roles.' },
       { name: 'Point of Sale', description: 'Section 3. Requires the **sales** or **admin** role.' },
+      {
+        name: 'Purchase Orders',
+        description:
+          'Section 6.2. Requires the **purchasing** or **admin** role. This is where a USD purchase cost becomes a Cedi price at the till.',
+      },
       { name: 'Service', description: 'Operational endpoints.' },
     ],
     components: {
@@ -102,6 +109,10 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         PartSearchResult: jsonSchema(posService.searchResult, 'output'),
         RecordSaleRequest: jsonSchema(posService.recordSaleInput, 'input'),
         Receipt: jsonSchema(posService.receipt, 'output'),
+        PurchaseOrderSummary: jsonSchema(backofficeService.purchaseOrderSummary, 'output'),
+        PurchaseOrderDetail: jsonSchema(backofficeService.purchaseOrderDetail, 'output'),
+        ReceiveStockRequest: jsonSchema(backofficeService.receiveStockInput, 'input'),
+        ReceiveStockResult: jsonSchema(backofficeService.receiveStockResult, 'output'),
       },
     },
     security: [{ bearerAuth: [] }],
@@ -195,6 +206,86 @@ export function buildOpenApiDocument(): Record<string, unknown> {
           responses: {
             201: { description: 'Sale recorded', content: json(ref('Receipt')) },
             409: errorResponse('Not enough stock on hand'),
+            ...AUTH_ERRORS,
+          },
+        },
+      },
+
+      '/api/backoffice/purchase-orders': {
+        get: {
+          tags: ['Purchase Orders'],
+          summary: 'List purchase orders',
+          description:
+            'Totals are given in both currencies: `totalUsd` is what the supplier invoices, `totalGhs` is that at the rate recorded on the order.',
+          parameters: [
+            {
+              name: 'status',
+              in: 'query',
+              required: false,
+              schema: {
+                type: 'string',
+                enum: ['draft', 'sent', 'partially_received', 'received', 'cancelled'],
+              },
+            },
+            { name: 'supplierId', in: 'query', required: false, schema: { type: 'string', format: 'uuid' } },
+          ],
+          responses: {
+            200: {
+              description: 'Matching orders, newest first',
+              content: json({ type: 'array', items: ref('PurchaseOrderSummary') }),
+            },
+            ...AUTH_ERRORS,
+          },
+        },
+      },
+
+      '/api/backoffice/purchase-orders/{id}': {
+        get: {
+          tags: ['Purchase Orders'],
+          summary: 'One purchase order, with its lines and delivery history',
+          description:
+            'Each line carries its landed cost — unit cost in USD times the order FX rate — and `receipts` lists each delivery against the order, with what arrived and what it was worth in Cedis.',
+          parameters: [
+            { name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
+          ],
+          responses: {
+            200: { description: 'The order', content: json(ref('PurchaseOrderDetail')) },
+            404: errorResponse('No such purchase order'),
+            ...AUTH_ERRORS,
+          },
+        },
+      },
+
+      '/api/backoffice/purchase-orders/{id}/receive': {
+        post: {
+          tags: ['Purchase Orders'],
+          summary: 'Receive stock against a purchase order',
+          description: [
+            'The step the whole purchase chain exists for. In one transaction it raises',
+            'the quantity received per line, increases stock and writes a movement for',
+            'each, computes the landed cost, re-suggests a sell price, appends to price',
+            'history, and moves the order to `partially_received` or `received`.',
+            '',
+            '`landed cost = unit cost (USD) x the FX rate recorded on the order`. That',
+            'rate is fixed for the life of the order: a later delivery lands at the rate',
+            'originally paid, not at the rate today.',
+            '',
+            'Send only the lines that actually arrived, with what arrived now — not a',
+            'running total. Receiving less than was ordered leaves the order partially',
+            'received; receiving more than is outstanding is refused.',
+            '',
+            'A part nobody has priced takes the new suggestion. A price somebody set by',
+            'hand is **kept** — it was a deliberate decision — but comes back with',
+            '`needsReview: true` when the cost it was set against has since moved.',
+          ].join('\n'),
+          parameters: [
+            { name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
+          ],
+          requestBody: { required: true, content: json(ref('ReceiveStockRequest')) },
+          responses: {
+            201: { description: 'Stock received', content: json(ref('ReceiveStockResult')) },
+            404: errorResponse('No such purchase order'),
+            409: errorResponse('The order is a draft, cancelled, or already fully received'),
             ...AUTH_ERRORS,
           },
         },

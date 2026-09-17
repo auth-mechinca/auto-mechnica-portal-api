@@ -241,7 +241,7 @@ disagreeing. Run it after `db:reset` for a clean history; that is the normal cas
 ## Tests
 
 ```bash
-npm test        # 87 tests
+npm test        # 102 tests
 npm run typecheck
 ```
 
@@ -261,6 +261,8 @@ constraint is genuinely missing.
 | `test/pos-sale.test.ts` | The sale transaction: pricing, stock, rollback, payment methods, invoice numbering, due dates |
 | `test/pos-search.test.ts` | Part search, and that no cost figure is ever returned to a Sales session |
 | `test/openapi.test.ts` | Every documented path exists, every $ref resolves, no unimplemented module is promised |
+| `test/receive-stock.test.ts` | The purchase chain, asserted against the exact figures on the wireframes |
+| `test/price-review.test.ts` | What an overridden price does when the same part is bought again at a new cost |
 | `test/migrations.test.ts` | Migration applies cleanly, 17 tables in `app`, nothing in `public`, no balance column anywhere |
 | `test/money.test.ts` | GHS returned as exact strings, FX scale, and landed cost = USD x rate |
 | `test/constraints.test.ts` | Duplicate SKU, dangling FK, duplicate balance per part/location |
