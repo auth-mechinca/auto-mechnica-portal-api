@@ -1,19 +1,6 @@
 import type { RequestHandler } from 'express';
-import jwt from 'jsonwebtoken';
-import { z } from 'zod';
-import { env } from '../config/env.js';
 import { ApiError } from '../lib/http.js';
-
-export const ROLES = ['sales', 'purchasing', 'accountant', 'admin'] as const;
-export type Role = (typeof ROLES)[number];
-
-const claims = z.object({
-  sub: z.string().uuid(),
-  email: z.string(),
-  role: z.enum(ROLES),
-});
-
-export type AuthUser = z.infer<typeof claims>;
+import { verifyToken, type AuthUser, type Role } from '../lib/token.js';
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -24,17 +11,12 @@ declare global {
   }
 }
 
-export function signToken(user: AuthUser): string {
-  return jwt.sign(user, env.JWT_SECRET, { expiresIn: env.JWT_EXPIRES_IN as jwt.SignOptions['expiresIn'] });
-}
-
 export const requireAuth: RequestHandler = (req, _res, next) => {
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) return next(ApiError.unauthorized());
 
   try {
-    const decoded = jwt.verify(header.slice('Bearer '.length), env.JWT_SECRET);
-    req.user = claims.parse(decoded);
+    req.user = verifyToken(header.slice('Bearer '.length));
     next();
   } catch {
     next(ApiError.unauthorized('Invalid or expired token'));
@@ -53,9 +35,15 @@ export const requireRole =
   (req, _res, next) => {
     if (!req.user) return next(ApiError.unauthorized());
     if (!allowed.includes(req.user.role)) {
-      return next(
-        ApiError.forbidden(`This area requires one of: ${allowed.join(', ')}`),
-      );
+      return next(ApiError.forbidden(`This area requires one of: ${allowed.join(', ')}`));
     }
     next();
   };
+
+/** The authenticated user, for a handler mounted behind `requireAuth`. Throws
+ *  rather than returning undefined, so a route that forgot the middleware fails
+ *  loudly instead of silently treating the request as anonymous. */
+export function currentUser(req: { user?: AuthUser }): AuthUser {
+  if (!req.user) throw ApiError.unauthorized();
+  return req.user;
+}

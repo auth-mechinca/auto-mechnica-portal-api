@@ -125,16 +125,51 @@ src/
     client.ts          pool + drizzle instance, exports Db and Tx types
     schema/            one file per domain, all re-exported from index.ts
   middleware/
-    auth.ts            requireAuth + requireRole
+    auth.ts            requireAuth, requireRole, currentUser
     error.ts           ApiError/ZodError -> JSON, everything else -> 500
-  lib/http.ts          ApiError, asyncHandler
+  lib/
+    http.ts            ApiError, asyncHandler
+    token.ts           JWT sign/verify and the role list
+    password.ts        hashing, and the constant-work verify
+    validate.ts        validateBody
   modules/
     auth/ pos/ ims/ financial/ backoffice/
+      routes.ts        wiring
+      service.ts       logic
 ```
 
-Business logic stays out of route handlers and off the ORM's happy path where
-money is involved — anything touching stock or money takes a `Tx`, not a `Db`, so
-it cannot run outside a transaction.
+### Module pattern
+
+Every module is two files, and the split is strict:
+
+| File | Holds | Must not hold |
+|---|---|---|
+| `routes.ts` | The router, role middleware, validation middleware, and the one line that calls the service | Any business rule, any query, any conditional |
+| `service.ts` | Business logic, database access, and the module's input schemas | `req`, `res`, `next`, status codes, or anything Express |
+
+```ts
+// routes.ts — wiring only
+authRouter.post(
+  '/login',
+  validateBody(service.loginInput),
+  asyncHandler(async (req, res) => {
+    res.json(await service.login(req.body));
+  }),
+);
+```
+
+A service takes plain values, returns plain values, and signals failure by
+throwing `ApiError`. The error middleware turns that into a status code, so the
+service never picks one. That is what keeps the logic callable from a seed
+script, a test, or a future job runner without faking a request object.
+
+Input schemas live in `service.ts` because they describe what the service
+accepts; the route mounts them with `validateBody`, so validation stays
+middleware and the handler receives exactly what the schema describes.
+
+Business logic stays off the ORM's happy path where money is involved — anything
+touching stock or money takes a `Tx`, not a `Db`, so it cannot run outside a
+transaction.
 
 ## RBAC
 
