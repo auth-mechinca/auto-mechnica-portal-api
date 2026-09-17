@@ -12,7 +12,13 @@ export const payments = appSchema.table(
   'payments',
   {
     id: primaryKey(),
-    customerId: uuid('customer_id').notNull().references(() => customers.id, { onDelete: 'restrict' }),
+    /** Null for a walk-in sale settled at the till, matching
+     *  sales_invoices.customer_id — the two must agree about what a walk-in is.
+     *  A null-customer payment never reaches receivables, because every balance
+     *  is derived per customer. A cheque is the exception and the service
+     *  refuses one without a customer: a bounced cheque with nobody attached
+     *  would be a debt with no one to chase. */
+    customerId: uuid('customer_id').references(() => customers.id, { onDelete: 'restrict' }),
     method: paymentMethod('method').notNull(),
     amount: ghs('amount').notNull(),
     /** Cash and MoMo are inserted already 'cleared'. Cheques start 'pending' and

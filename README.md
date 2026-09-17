@@ -213,7 +213,7 @@ disagreeing. Run it after `db:reset` for a clean history; that is the normal cas
 ## Tests
 
 ```bash
-npm test        # 47 tests
+npm test        # 81 tests
 npm run typecheck
 ```
 
@@ -229,6 +229,9 @@ constraint is genuinely missing.
 | `test/rbac.test.ts` | Every role against every module router, plus forged tokens, unknown roles, and a role smuggled in a request body |
 | `test/auth.test.ts` | Login for the four demo accounts, case-insensitive email, deactivated users, and account enumeration |
 | `test/password.test.ts` | Hash cost, and that an unknown account costs the same work as a wrong password |
+| `test/money-arithmetic.test.ts` | Exact multiply, add, subtract and compare — every price and balance goes through these |
+| `test/pos-sale.test.ts` | The sale transaction: pricing, stock, rollback, payment methods, invoice numbering, due dates |
+| `test/pos-search.test.ts` | Part search, and that no cost figure is ever returned to a Sales session |
 | `test/migrations.test.ts` | Migration applies cleanly, 17 tables in `app`, nothing in `public`, no balance column anywhere |
 | `test/money.test.ts` | GHS returned as exact strings, FX scale, and landed cost = USD x rate |
 | `test/constraints.test.ts` | Duplicate SKU, dangling FK, duplicate balance per part/location |

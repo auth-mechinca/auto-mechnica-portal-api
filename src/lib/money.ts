@@ -5,7 +5,8 @@
  *  with what the API will later compute is worse than no seed data, so the
  *  arithmetic here runs on scaled integers and rounds half-up.
  *
- *  Positive values only — that is all seeds deal in.
+ *  multiply() and the pricing helpers assume positive values; add(), subtract()
+ *  and compare() handle negatives, which change calculations need.
  */
 
 const split = (value: string): readonly [bigint, number] => {
@@ -14,8 +15,10 @@ const split = (value: string): readonly [bigint, number] => {
 };
 
 const format = (value: bigint, dp: number): string => {
-  const digits = value.toString().padStart(dp + 1, '0');
-  return dp === 0 ? digits : `${digits.slice(0, -dp)}.${digits.slice(-dp)}`;
+  const negative = value < 0n;
+  const digits = (negative ? -value : value).toString().padStart(dp + 1, '0');
+  const rendered = dp === 0 ? digits : `${digits.slice(0, -dp)}.${digits.slice(-dp)}`;
+  return negative ? `-${rendered}` : rendered;
 };
 
 export function multiply(a: string, b: string, dp = 2): string {
@@ -30,6 +33,32 @@ export function multiply(a: string, b: string, dp = 2): string {
   const quotient = raw / divisor;
   const remainder = raw % divisor;
   return format(remainder * 2n >= divisor ? quotient + 1n : quotient, dp);
+}
+
+/** Widens two values to a common scale so they can be compared or added. */
+const align = (a: string, b: string): readonly [bigint, bigint, number] => {
+  const [aInt, aDp] = split(a);
+  const [bInt, bDp] = split(b);
+  const dp = Math.max(aDp, bDp);
+  return [aInt * 10n ** BigInt(dp - aDp), bInt * 10n ** BigInt(dp - bDp), dp];
+};
+
+export function add(a: string, b: string): string {
+  const [aInt, bInt, dp] = align(a, b);
+  return format(aInt + bInt, dp);
+}
+
+export const sum = (values: readonly string[]): string => values.reduce(add, '0.00');
+
+/** -1 if a < b, 0 if equal, 1 if a > b. */
+export function compare(a: string, b: string): -1 | 0 | 1 {
+  const [aInt, bInt] = align(a, b);
+  return aInt === bInt ? 0 : aInt < bInt ? -1 : 1;
+}
+
+export function subtract(a: string, b: string): string {
+  const [aInt, bInt, dp] = align(a, b);
+  return format(aInt - bInt, dp);
 }
 
 /** landed cost (GHS) = unit cost (USD) x FX rate (GHS per USD). Section 6.4 —
