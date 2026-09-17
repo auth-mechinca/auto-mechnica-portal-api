@@ -172,7 +172,7 @@ The cost is one indexed lookup per request, affordable precisely because the API
 | A walk-in's payment | `payments.customer_id` became nullable, matching `sales_invoices`. A cheque still requires a named customer — a bounced cheque attached to nobody is a debt with no one to chase |
 | Invoice numbering | A Postgres sequence. `max(reference) + 1` lets two tills read the same number, and the unique index would then reject one sale outright |
 | Overridden price meeting a new cost | **The override stands and the part is flagged for review.** Answered below |
-| What "margin" means | A margin **on the selling price**, not a markup on cost. `price = cost ÷ (1 − margin ÷ 100)` |
+| What "margin" means | A margin **on the selling price**, not a markup on cost. `price = cost ÷ (1 − margin ÷ 100)`. This follows the accounting sense of the word — gross margin is a share of revenue — which is a fact about terminology rather than something confirmed with the shop owner. If he prices on cost instead, the fix is to relabel the setting "Markup %" and flip one function |
 | Changing the global margin | Affects future suggestions only; saved prices are decisions, not derivations |
 | Logout | Server-side revocation, not client-side forgetting |
 
@@ -186,16 +186,11 @@ An earlier note said `prices` already had a review state and that option (b) was
 
 ## 5. Still open — needs a call
 
-**1. The wireframes still show markup-era prices.** Resolved in the code, not yet on the canvas.
+**1. The wireframes still show markup-era prices.** Settled in the code, not yet on the canvas.
 
-*Margin now means margin on the selling price* — 35% of what the customer pays, the accountant's reading, confirmed 17 September. `suggested = landed ÷ (1 − margin ÷ 100)`. The API, the seeds and the tests all moved together.
+Margin now means margin on the selling price — `suggested = landed ÷ (1 − margin ÷ 100)` — and the API, seeds and tests moved together. The 26 artboards did not: they still show GH₵ 393.39 where the API says GH₵ 448.31, and PriceEdit's "36.9% on cost" no longer describes the system. The figures need regenerating before the client sees the canvas and the API side by side.
 
-The 26 artboards did not. They still show GH₵ 393.39 where the API now says GH₵ 448.31, and PriceEdit's "36.9% on cost" no longer describes what the system does. Anyone reading the canvas and the API side by side will see them disagree.
-
-Two things to settle:
-
-- The artboards need their figures regenerating before the client sees them.
-- **The number stayed at 35 while its meaning changed, so every suggested price rises by about 14%.** If the intent was to keep today's prices and only fix the label, `default_margin_pct` should be about 26. Worth confirming which the owner actually wants — it is a settings change, not a code change.
+The margin itself is a setting, so what it should be is the owner's call at a keyboard, not an open question here.
 
 **2. Post-dated cheques.** Common here, and the schema cannot represent one. Adding a cheque date is small; deciding whether the demo needs it is the question.
 
