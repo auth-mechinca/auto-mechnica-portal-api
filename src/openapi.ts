@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import * as authService from './modules/auth/service.js';
 import * as backofficeService from './modules/backoffice/service.js';
+import * as financialService from './modules/financial/service.js';
 import * as posService from './modules/pos/service.js';
 
 /** The OpenAPI document, generated from the very zod schemas the API validates
@@ -77,13 +78,19 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         '**Not yet implemented.** The IMS, Financial Core and Backoffice routers are',
         'mounted and enforce their roles, but carry no handlers. They are omitted',
         'here rather than documented as promises. Backoffice is partly implemented:',
-        'purchase orders and receiving are here, suppliers and price management are not.',
+        'purchase orders, receiving and price management are here; suppliers and',
+        'creating a purchase order are not. IMS has no handlers yet.',
       ].join('\n'),
     },
     servers: [{ url: 'http://localhost:4000', description: 'Local development' }],
     tags: [
       { name: 'Auth', description: 'Sign in and identify the current user. Open to all roles.' },
       { name: 'Point of Sale', description: 'Section 3. Requires the **sales** or **admin** role.' },
+      {
+        name: 'Receivables',
+        description:
+          'Section 5. Requires the **accountant** or **admin** role. A balance is always derived from invoices minus cleared payments — no endpoint here can set one.',
+      },
       {
         name: 'Prices',
         description:
@@ -123,6 +130,11 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         PriceDetail: jsonSchema(backofficeService.priceDetail, 'output'),
         SetFinalPriceRequest: jsonSchema(backofficeService.setFinalPriceInput, 'input'),
         Settings: jsonSchema(backofficeService.settingsResponse, 'output'),
+        CustomerAccounts: jsonSchema(financialService.customerAccountsResponse, 'output'),
+        CustomerAccount: jsonSchema(financialService.customerAccountDetail, 'output'),
+        RecordPaymentRequest: jsonSchema(financialService.recordPaymentInput, 'input'),
+        ChequeQueue: jsonSchema(financialService.chequeQueueResponse, 'output'),
+        Cheque: jsonSchema(financialService.chequeRow, 'output'),
         UpdateSettingsRequest: jsonSchema(backofficeService.updateSettingsInput, 'input'),
       },
     },
@@ -185,6 +197,123 @@ export function buildOpenApiDocument(): Record<string, unknown> {
           responses: {
             200: { description: 'The current user', content: json(ref('User')) },
             401: AUTH_ERRORS[401],
+          },
+        },
+      },
+
+      '/api/financial/customers': {
+        get: {
+          tags: ['Receivables'],
+          summary: 'Customer accounts, most overdue first',
+          description: [
+            'Balances are derived: invoices minus allocations from payments that have',
+            'cleared. No table stores one, so no endpoint can set one.',
+            '',
+            '`daysLate` is measured from the **due date** of the oldest unpaid invoice —',
+            'the one you would chase on — not from the invoice date. Ageing buckets are',
+            'per invoice rather than per customer, so a single very late invoice is not',
+            'hidden behind a current one on the same account.',
+            '',
+            'A pending cheque is deliberately counted as still owed: it has not cleared,',
+            'so it has paid nothing.',
+          ].join('\n'),
+          parameters: [
+            { name: 'q', in: 'query', required: false, schema: { type: 'string' }, description: 'Match customer name or phone' },
+          ],
+          responses: {
+            200: { description: 'Accounts with totals, ageing and summary', content: json(ref('CustomerAccounts')) },
+            ...AUTH_ERRORS,
+          },
+        },
+      },
+
+      '/api/financial/customers/{id}': {
+        get: {
+          tags: ['Receivables'],
+          summary: 'One account, with every invoice and payment',
+          description:
+            'The Outstanding column across the invoices adds up to the balance — the whole calculation on one response. On a payment, `outstandingAfter` is what the invoice still owed once that payment landed, so a bounced payment reads as the full amount again.',
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: {
+            200: { description: 'The account', content: json(ref('CustomerAccount')) },
+            404: errorResponse('Customer not found'),
+            ...AUTH_ERRORS,
+          },
+        },
+      },
+
+      '/api/financial/payments': {
+        post: {
+          tags: ['Receivables'],
+          summary: 'Record a payment received after the sale',
+          description: [
+            'For money arriving after the counter — a transfer, a cheque dropped off,',
+            'MoMo against an account. Payments taken at the till go through POS.',
+            '',
+            'Cash and MoMo are recorded `cleared` and move the balance immediately. A',
+            'cheque is recorded `pending` and moves nothing until somebody clears it in',
+            'the queue.',
+            '',
+            'Allocations are optional: leave them out and the money sits against the',
+            'account until it is applied. Allocating oldest-first is the convention, not',
+            'a rule — the accountant decides. An allocation may not exceed what the',
+            'invoice still owes, nor the payment itself.',
+          ].join('\n'),
+          requestBody: { required: true, content: json(ref('RecordPaymentRequest')) },
+          responses: {
+            201: { description: 'Recorded; returns the updated account', content: json(ref('CustomerAccount')) },
+            ...AUTH_ERRORS,
+          },
+        },
+      },
+
+      '/api/financial/cheques': {
+        get: {
+          tags: ['Receivables'],
+          summary: 'The cheque queue',
+          parameters: [
+            {
+              name: 'status',
+              in: 'query',
+              required: false,
+              schema: { type: 'string', enum: ['pending', 'cleared', 'bounced'] },
+            },
+          ],
+          responses: {
+            200: { description: 'Cheques with counts and the pending value', content: json(ref('ChequeQueue')) },
+            ...AUTH_ERRORS,
+          },
+        },
+      },
+
+      '/api/financial/cheques/{id}/clear': {
+        post: {
+          tags: ['Receivables'],
+          summary: 'Mark a cheque cleared',
+          description:
+            'The payment flips from pending to cleared, its allocations take effect, and the balance drops. This is the only moment a cheque touches a balance. `id` is the payment id from the queue.',
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: {
+            200: { description: 'Cleared', content: json(ref('Cheque')) },
+            404: errorResponse('No cheque against that payment'),
+            409: errorResponse('That cheque is already cleared or bounced'),
+            ...AUTH_ERRORS,
+          },
+        },
+      },
+
+      '/api/financial/cheques/{id}/bounce': {
+        post: {
+          tags: ['Receivables'],
+          summary: 'Mark a cheque bounced',
+          description:
+            'The payment flips to bounced and the invoice goes back to outstanding in full. The row is never deleted — it stays in the customer history, flagged, because a bounce is something that happened.',
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: {
+            200: { description: 'Bounced', content: json(ref('Cheque')) },
+            404: errorResponse('No cheque against that payment'),
+            409: errorResponse('That cheque is already cleared or bounced'),
+            ...AUTH_ERRORS,
           },
         },
       },

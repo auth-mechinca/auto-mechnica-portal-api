@@ -16,11 +16,11 @@
 | Backoffice — price management | **Done** — list with derived status, cost basis and history, set a price, change the shop margin |
 | Backoffice — suppliers, PO create | **Not started** — routers mounted, no handlers |
 | IMS | **Not started** — router mounted, no handlers |
-| Financial Core | **Not started** — router mounted, no handlers |
+| Financial Core | **Done** — customer accounts with ageing, account detail, recording payments, the cheque queue |
 | Next.js frontend | **Not started** — repo is an empty initial commit |
 | API documentation | **Done** — OpenAPI 3.1 at `/openapi.json`, Swagger UI at `/docs` |
 
-**123 tests pass.** The spine of the demo now works end to end on the server: receive a purchase order at a new FX rate, watch the landed cost and suggested price move, then sell the part at the till and watch stock and the customer balance follow. What is missing is a face — nothing is wired to a screen yet.
+**143 tests pass.** The spine of the demo now works end to end on the server: receive a purchase order at a new FX rate, watch the landed cost and suggested price move, then sell the part at the till and watch stock and the customer balance follow. What is missing is a face — nothing is wired to a screen yet.
 
 ---
 
@@ -100,6 +100,12 @@ Every module is two files, and the split is strict. `routes.ts` holds the router
 | `GET /api/backoffice/prices/:partId` | purchasing | Cost basis — which PO, which USD cost, which rate — and full history |
 | `PATCH /api/backoffice/prices/:partId` | purchasing | Set the final price; appears in POS immediately |
 | `GET`/`PATCH /api/backoffice/settings` | purchasing | The global margin |
+| `GET /api/financial/customers` | accountant | Accounts, most overdue first, with ageing and summary tiles |
+| `GET /api/financial/customers/:id` | accountant | Every invoice and payment on one account |
+| `POST /api/financial/payments` | accountant | Money arriving after the counter |
+| `GET /api/financial/cheques` | accountant | The queue |
+| `POST /api/financial/cheques/:id/clear` | accountant | The only moment a cheque touches a balance |
+| `POST /api/financial/cheques/:id/bounce` | accountant | Reverses without deleting |
 
 Admin reaches everything.
 
@@ -144,6 +150,30 @@ rather than a flag anyone has to remember to raise.
 Changing the global margin affects what is suggested from then on. Prices already
 saved are left alone: they were decisions taken at the margin of the day, and
 recomputing them would silently reprice the catalogue.
+
+### Receivables
+
+Two rules run through the module, and both are structural rather than conventions
+anyone has to remember.
+
+**A balance is derived** — invoices minus allocations from payments that have
+cleared. No table has a balance column, so there is nothing for an endpoint to
+set. A pending cheque is therefore counted as still owed, which is correct: it
+has not cleared, so it has paid nothing.
+
+**A bounce reverses without deleting.** The payment keeps its row and its
+allocations; flipping it out of `cleared` is what puts the invoice back to
+outstanding. The history still shows the cheque, flagged, because a bounce is
+something that happened.
+
+Ageing is measured from the **due date**, not the invoice date, and the buckets
+are per invoice rather than per customer — a single very late invoice would
+otherwise hide behind a current one on the same account. A customer row shows the
+due date of their oldest unpaid invoice, which is the one you would chase on.
+
+Verified end to end: POS takes a cheque sale, the account shows the full amount
+still owed, clearing drops it to zero, and bouncing a second cheque puts that
+invoice back to its full amount with the payment still on the record.
 
 ### Money
 
@@ -212,11 +242,13 @@ Added during the wireframing and API passes: per-customer payment terms, credit 
 
 ## 7. What's next
 
-**Financial Core.** It has the most screens with nothing behind them, and POS is already writing the invoices, cheques and allocations it would read. The Cheque Queue is the cheapest win — a pending cheque exists the moment a sale is made on one.
+**Suppliers and PO Create.** Without them a purchase order can only be seeded, and creating one is where the draft `fx_rate NOT NULL` mismatch has to be resolved.
 
-After that, suppliers and PO Create — which is where the draft `fx_rate NOT NULL` mismatch has to be resolved — and IMS last, since it is mostly catalogue maintenance and receiving already covers the stock movements that matter.
+After that IMS, since it is mostly catalogue maintenance and receiving already covers the stock movements that matter.
 
-The purchase-to-till chain is now complete end to end on the server: receive a purchase order at a new rate, watch the landed cost and suggestion move, see the part flagged for review, confirm a price, and find that exact figure at the till. That is the story Section 6.3 describes, and it runs.
+The whole spine now runs on the server: receive a purchase order at a new rate, watch the landed cost and suggestion move, see the part flagged for review, confirm a price, find that figure at the till, sell on a cheque, and watch the balance move only when the accountant clears it. Four of the five demo areas are behind an API.
+
+The frontend remains an empty scaffold, and it is now unambiguously the critical path — none of this is demonstrable to the client without screens.
 
 The frontend remains untouched. At some point that becomes the critical path, since none of the above is demonstrable without it.
 
