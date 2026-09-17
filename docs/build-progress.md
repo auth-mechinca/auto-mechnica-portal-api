@@ -14,13 +14,13 @@
 | POS | **Done** — part search, recording a sale, reading the receipt back |
 | Backoffice — purchase orders | **Done** — list, detail, receive stock with the full cost-to-price chain |
 | Backoffice — price management | **Done** — list with derived status, cost basis and history, set a price, change the shop margin |
-| Backoffice — suppliers, PO create | **Not started** — routers mounted, no handlers |
+| Backoffice — suppliers, PO create | **Done** — supplier CRUD with deactivation, drafting a PO, sending, cancelling |
 | IMS | **Not started** — router mounted, no handlers |
 | Financial Core | **Done** — customer accounts with ageing, account detail, recording payments, the cheque queue |
 | Next.js frontend | **Not started** — repo is an empty initial commit |
 | API documentation | **Done** — OpenAPI 3.1 at `/openapi.json`, Swagger UI at `/docs` |
 
-**143 tests pass.** The spine of the demo now works end to end on the server: receive a purchase order at a new FX rate, watch the landed cost and suggested price move, then sell the part at the till and watch stock and the customer balance follow. What is missing is a face — nothing is wired to a screen yet.
+**158 tests pass.** The spine of the demo now works end to end on the server: receive a purchase order at a new FX rate, watch the landed cost and suggested price move, then sell the part at the till and watch stock and the customer balance follow. What is missing is a face — nothing is wired to a screen yet.
 
 ---
 
@@ -106,6 +106,12 @@ Every module is two files, and the split is strict. `routes.ts` holds the router
 | `GET /api/financial/cheques` | accountant | The queue |
 | `POST /api/financial/cheques/:id/clear` | accountant | The only moment a cheque touches a balance |
 | `POST /api/financial/cheques/:id/bounce` | accountant | Reverses without deleting |
+| `GET`/`POST /api/backoffice/suppliers` | purchasing | List and create |
+| `GET`/`PATCH /api/backoffice/suppliers/:id` | purchasing | Detail with PO history; deactivate rather than delete |
+| `POST /api/backoffice/purchase-orders` | purchasing | Draft or send; the reference is generated |
+| `PATCH /api/backoffice/purchase-orders/:id` | purchasing | Drafts only |
+| `POST /api/backoffice/purchase-orders/:id/send` | purchasing | Needs a rate and a line |
+| `POST /api/backoffice/purchase-orders/:id/cancel` | purchasing | Only before anything arrives |
 
 Admin reaches everything.
 
@@ -150,6 +156,26 @@ rather than a flag anyone has to remember to raise.
 Changing the global margin affects what is suggested from then on. Prices already
 saved are left alone: they were decisions taken at the margin of the day, and
 recomputing them would silently reprice the catalogue.
+
+### Suppliers and drafting a purchase order
+
+A supplier is never deleted. One you stop using is switched to inactive, so its
+purchase-order history stays intact and past costs remain explicable; an inactive
+supplier cannot be put on a new order.
+
+`purchasedToDateUsd` is reported in dollars, because every order carries its own
+FX rate — summing the Cedi totals would add up figures agreed on different days.
+
+**A draft may be saved without an FX rate.** That closes the mismatch flagged
+during wireframing: the PO List screen shows a draft with "not set" and no Cedi
+total, while the column was `NOT NULL`. `fx_rate` is now nullable and the rate is
+required at the moment the order is *sent*, along with at least one line —
+enforced in the service, because a check constraint cannot express "required in
+some states".
+
+Once sent, the order is frozen. Its lines and its rate are what the supplier is
+working to, and changing them afterwards would rewrite the cost basis of stock
+already received against it. Cancelling is refused once anything has arrived.
 
 ### Receivables
 
@@ -226,9 +252,7 @@ The margin itself is a setting, so what it should be is the owner's call at a ke
 
 **3. Credit notes.** The invoices tab says a mistake is corrected with a credit, not by editing history. That is the right principle, but there is no credit-note table and it is not in scope — so today it is a statement of intent.
 
-**4. A draft purchase order has no FX rate.** The PO List wireframe shows a draft with "not set" and no Cedi total, but `purchase_orders.fx_rate` is `NOT NULL`. Receiving is unaffected — nothing can be received without a rate — so this belongs with **PO Create**, not with receiving. Flagged so it is not discovered mid-build.
-
-**5. ~~The scope and progress documents are not in version control.~~ Done 17 September.** Both now live in `docs/` in the API repo, so a decision and the code that implements it move together. The wireframes in `design/` are still outside any repository — worth deciding whether they belong here too, since the API's tests assert figures read off them.
+**4. ~~The scope and progress documents are not in version control.~~ Done 17 September.** Both now live in `docs/` in the API repo, so a decision and the code that implements it move together. The wireframes in `design/` are still outside any repository — worth deciding whether they belong here too, since the API's tests assert figures read off them.
 
 ---
 
@@ -242,13 +266,13 @@ Added during the wireframing and API passes: per-customer payment terms, credit 
 
 ## 7. What's next
 
-**Suppliers and PO Create.** Without them a purchase order can only be seeded, and creating one is where the draft `fx_rate NOT NULL` mismatch has to be resolved.
+**IMS** is the only module left without handlers — catalogue maintenance, manual stock adjustment, and the low-stock list. Receiving already covers the stock movements that matter, so it is the smallest of the five.
 
-After that IMS, since it is mostly catalogue maintenance and receiving already covers the stock movements that matter.
+Then the frontend, which is the real answer.
 
-The whole spine now runs on the server: receive a purchase order at a new rate, watch the landed cost and suggestion move, see the part flagged for review, confirm a price, find that figure at the till, sell on a cheque, and watch the balance move only when the accountant clears it. Four of the five demo areas are behind an API.
+The whole spine now runs on the server: receive a purchase order at a new rate, watch the landed cost and suggestion move, see the part flagged for review, confirm a price, find that figure at the till, sell on a cheque, and watch the balance move only when the accountant clears it. Suppliers and purchase orders can now be created from nothing, so the whole chain runs without seeded data standing in for a step.
 
-The frontend remains an empty scaffold, and it is now unambiguously the critical path — none of this is demonstrable to the client without screens.
+That leaves IMS as the only module without handlers, and the frontend as an empty scaffold. The frontend is unambiguously the critical path now — none of this is demonstrable to the client without screens.
 
 The frontend remains untouched. At some point that becomes the critical path, since none of the above is demonstrable without it.
 

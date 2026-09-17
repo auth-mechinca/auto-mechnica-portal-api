@@ -1,8 +1,16 @@
 import { appSchema } from './schema.js';
-import { boolean, date, index, text, uuid } from 'drizzle-orm/pg-core';
+import { boolean, date, index, text, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { fxRate, primaryKey, qty, timestamps, usd } from './common.js';
 import { poStatus } from './enums.js';
 import { parts } from './catalog.js';
+
+/** Purchase-order numbers come from a sequence, for the same reason invoice
+ *  numbers do: counting existing rows lets two people drafting at once read the
+ *  same number, and the unique index would then reject one of them outright. */
+export const purchaseOrderNumberSeq = appSchema.sequence('purchase_order_number_seq', {
+  startWith: 1,
+  increment: 1,
+});
 
 export const suppliers = appSchema.table('suppliers', {
   id: primaryKey(),
@@ -29,11 +37,22 @@ export const purchaseOrders = appSchema.table(
     supplierId: uuid('supplier_id').notNull().references(() => suppliers.id, { onDelete: 'restrict' }),
     status: poStatus('status').notNull().default('draft'),
     orderDate: date('order_date').notNull(),
-    /** GHS per USD, entered by hand by the purchasing officer. Not a live feed. */
-    fxRate: fxRate('fx_rate').notNull(),
+    /** GHS per USD, entered by hand by the purchasing officer. Not a live feed.
+     *
+     *  Null while the order is still a draft: nothing has been agreed with anyone
+     *  yet, so there is no rate to record and the order has no Cedi value. The
+     *  rate becomes required at the moment it is marked sent, which is enforced
+     *  in the service — a check constraint cannot express "required in some
+     *  states", and spelling it out in code keeps the reason readable. */
+    fxRate: fxRate('fx_rate'),
     ...timestamps,
   },
-  (t) => [index('purchase_orders_supplier_idx').on(t.supplierId)],
+  (t) => [
+    index('purchase_orders_supplier_idx').on(t.supplierId),
+    // The number on the supplier's paperwork. Two orders sharing one is a
+    // real-world problem, not merely a data one.
+    uniqueIndex('purchase_orders_reference_idx').on(t.reference),
+  ],
 );
 
 export const purchaseOrderLines = appSchema.table(

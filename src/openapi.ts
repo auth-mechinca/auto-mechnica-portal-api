@@ -77,9 +77,8 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         '',
         '**Not yet implemented.** The IMS, Financial Core and Backoffice routers are',
         'mounted and enforce their roles, but carry no handlers. They are omitted',
-        'here rather than documented as promises. Backoffice is partly implemented:',
-        'purchase orders, receiving and price management are here; suppliers and',
-        'creating a purchase order are not. IMS has no handlers yet.',
+        'here rather than documented as promises. IMS is the only module with no',
+        'handlers yet.',
       ].join('\n'),
     },
     servers: [{ url: 'http://localhost:4000', description: 'Local development' }],
@@ -95,6 +94,11 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         name: 'Prices',
         description:
           'Section 6.3. Requires the **purchasing** or **admin** role. The final price set here is the only price figure Sales ever sees.',
+      },
+      {
+        name: 'Suppliers',
+        description:
+          'Section 6.1. Requires the **purchasing** or **admin** role. Suppliers are never deleted — one you stop using becomes inactive, so its purchase-order history stays intact.',
       },
       {
         name: 'Purchase Orders',
@@ -135,6 +139,12 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         RecordPaymentRequest: jsonSchema(financialService.recordPaymentInput, 'input'),
         ChequeQueue: jsonSchema(financialService.chequeQueueResponse, 'output'),
         Cheque: jsonSchema(financialService.chequeRow, 'output'),
+        Supplier: jsonSchema(backofficeService.supplierRow, 'output'),
+        SupplierDetail: jsonSchema(backofficeService.supplierDetail, 'output'),
+        CreateSupplierRequest: jsonSchema(backofficeService.createSupplierInput, 'input'),
+        UpdateSupplierRequest: jsonSchema(backofficeService.updateSupplierInput, 'input'),
+        CreatePurchaseOrderRequest: jsonSchema(backofficeService.createPurchaseOrderInput, 'input'),
+        UpdatePurchaseOrderRequest: jsonSchema(backofficeService.updatePurchaseOrderInput, 'input'),
         UpdateSettingsRequest: jsonSchema(backofficeService.updateSettingsInput, 'input'),
       },
     },
@@ -468,7 +478,86 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         },
       },
 
+      '/api/backoffice/suppliers': {
+        get: {
+          tags: ['Suppliers'],
+          summary: 'List suppliers',
+          parameters: [
+            { name: 'q', in: 'query', required: false, schema: { type: 'string' }, description: 'Match name or contact person' },
+            {
+              name: 'status',
+              in: 'query',
+              required: false,
+              schema: { type: 'string', enum: ['active', 'inactive', 'all'], default: 'active' },
+            },
+          ],
+          responses: {
+            200: { description: 'Suppliers by name', content: json({ type: 'array', items: ref('Supplier') }) },
+            ...AUTH_ERRORS,
+          },
+        },
+        post: {
+          tags: ['Suppliers'],
+          summary: 'Create a supplier',
+          description:
+            '`currency` records how the supplier invoices — USD by default, since the client buys from third-party suppliers in dollars. It converts nothing on its own; conversion happens once, on the purchase order, at the rate typed there.',
+          requestBody: { required: true, content: json(ref('CreateSupplierRequest')) },
+          responses: {
+            201: { description: 'Created', content: json(ref('SupplierDetail')) },
+            ...AUTH_ERRORS,
+          },
+        },
+      },
+
+      '/api/backoffice/suppliers/{id}': {
+        get: {
+          tags: ['Suppliers'],
+          summary: 'One supplier, with their purchase-order history',
+          description:
+            '`purchasedToDateUsd` is given in dollars because every order carries its own FX rate — summing the Cedi totals would add up figures agreed on different days.',
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: {
+            200: { description: 'The supplier', content: json(ref('SupplierDetail')) },
+            404: errorResponse('Supplier not found'),
+            ...AUTH_ERRORS,
+          },
+        },
+        patch: {
+          tags: ['Suppliers'],
+          summary: 'Edit a supplier, or deactivate one',
+          description:
+            'Nothing is deleted. Setting `isActive: false` keeps the purchase-order history intact and stops the supplier appearing on a new order.',
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          requestBody: { required: true, content: json(ref('UpdateSupplierRequest')) },
+          responses: {
+            200: { description: 'Updated', content: json(ref('SupplierDetail')) },
+            404: errorResponse('Supplier not found'),
+            ...AUTH_ERRORS,
+          },
+        },
+      },
+
       '/api/backoffice/purchase-orders': {
+        post: {
+          tags: ['Purchase Orders'],
+          summary: 'Create a purchase order',
+          description: [
+            'The reference is generated on save. `status` defaults to `draft`.',
+            '',
+            'A draft may be saved without an FX rate: nothing has been agreed with anyone',
+            'yet, so it has no Cedi value and `fxRate` and `totalGhs` come back null. The',
+            'rate becomes required at the moment the order is sent, along with at least',
+            'one line.',
+            '',
+            'Costs are stored in USD exactly as entered. The Cedi figure is derived, never',
+            'typed.',
+          ].join('\n'),
+          requestBody: { required: true, content: json(ref('CreatePurchaseOrderRequest')) },
+          responses: {
+            201: { description: 'Created', content: json(ref('PurchaseOrderDetail')) },
+            ...AUTH_ERRORS,
+          },
+        },
         get: {
           tags: ['Purchase Orders'],
           summary: 'List purchase orders',
@@ -497,6 +586,20 @@ export function buildOpenApiDocument(): Record<string, unknown> {
       },
 
       '/api/backoffice/purchase-orders/{id}': {
+        patch: {
+          tags: ['Purchase Orders'],
+          summary: 'Edit a draft',
+          description:
+            'Drafts only. Once an order has gone out, its lines and its rate are what the supplier is working to, and changing them would rewrite the cost basis of stock already received against it. Supplying `lines` replaces them wholesale.',
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          requestBody: { required: true, content: json(ref('UpdatePurchaseOrderRequest')) },
+          responses: {
+            200: { description: 'Updated', content: json(ref('PurchaseOrderDetail')) },
+            404: errorResponse('Purchase order not found'),
+            409: errorResponse('Only a draft can be edited'),
+            ...AUTH_ERRORS,
+          },
+        },
         get: {
           tags: ['Purchase Orders'],
           summary: 'One purchase order, with its lines and delivery history',
@@ -508,6 +611,38 @@ export function buildOpenApiDocument(): Record<string, unknown> {
           responses: {
             200: { description: 'The order', content: json(ref('PurchaseOrderDetail')) },
             404: errorResponse('No such purchase order'),
+            ...AUTH_ERRORS,
+          },
+        },
+      },
+
+      '/api/backoffice/purchase-orders/{id}/send': {
+        post: {
+          tags: ['Purchase Orders'],
+          summary: 'Mark a draft as sent',
+          description:
+            'Requires an FX rate and at least one line. From here the order is frozen: the rate applies to every receipt against it, including partial deliveries months later.',
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: {
+            200: { description: 'Sent', content: json(ref('PurchaseOrderDetail')) },
+            404: errorResponse('Purchase order not found'),
+            409: errorResponse('That order is not a draft'),
+            ...AUTH_ERRORS,
+          },
+        },
+      },
+
+      '/api/backoffice/purchase-orders/{id}/cancel': {
+        post: {
+          tags: ['Purchase Orders'],
+          summary: 'Cancel a purchase order',
+          description:
+            'Only before anything arrives. Stock already received cannot be un-received, and the prices it set are standing against it.',
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: {
+            200: { description: 'Cancelled', content: json(ref('PurchaseOrderDetail')) },
+            404: errorResponse('Purchase order not found'),
+            409: errorResponse('Stock has already been received, or it is already cancelled'),
             ...AUTH_ERRORS,
           },
         },

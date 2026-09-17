@@ -65,10 +65,11 @@ export const purchaseOrderSummary = z.object({
   orderDate: z.string(),
   status: poStatusSchema,
   lineCount: z.number(),
-  /** GHS per USD, fixed for the life of the order. */
-  fxRate: z.string(),
+  /** GHS per USD, fixed for the life of the order. Null on a draft: nothing has
+   *  been agreed yet, so there is no rate and no Cedi value. */
+  fxRate: z.string().nullable(),
   totalUsd: z.string(),
-  totalGhs: z.string(),
+  totalGhs: z.string().nullable(),
 });
 export type PurchaseOrderSummary = z.infer<typeof purchaseOrderSummary>;
 
@@ -76,8 +77,8 @@ export const purchaseOrderDetail = purchaseOrderSummary.extend({
   orderedUnits: z.number(),
   receivedUnits: z.number(),
   /** Landed value of what has arrived, and of what is still to come. */
-  receivedGhs: z.string(),
-  outstandingGhs: z.string(),
+  receivedGhs: z.string().nullable(),
+  outstandingGhs: z.string().nullable(),
   lines: z.array(
     z.object({
       id: z.string().uuid(),
@@ -89,8 +90,9 @@ export const purchaseOrderDetail = purchaseOrderSummary.extend({
       quantityOutstanding: z.string(),
       unitCostUsd: z.string(),
       lineTotalUsd: z.string(),
-      /** unit cost x the order's FX rate. GHS from here on. */
-      landedCost: z.string(),
+      /** unit cost x the order's FX rate. GHS from here on, and null until the
+       *  order has a rate. */
+      landedCost: z.string().nullable(),
     }),
   ),
   receipts: z.array(
@@ -179,7 +181,7 @@ export async function listPurchaseOrders(
     lineCount: row.lineCount,
     fxRate: row.fxRate,
     totalUsd: multiply(row.totalUsd, '1'),
-    totalGhs: multiply(row.totalUsd, row.fxRate),
+    totalGhs: row.fxRate === null ? null : multiply(row.totalUsd, row.fxRate),
   }));
 }
 
@@ -219,7 +221,7 @@ export async function getPurchaseOrder(id: string): Promise<PurchaseOrderDetail>
     .orderBy(asc(parts.name));
 
   const lines = lineRows.map((line) => {
-    const landedCost = landedCostOf(line.unitCostUsd, order.fxRate);
+    const landedCost = order.fxRate === null ? null : landedCostOf(line.unitCostUsd, order.fxRate);
     const outstanding = String(Number(line.quantityOrdered) - Number(line.quantityReceived));
     return {
       id: line.id,
@@ -242,7 +244,7 @@ export async function getPurchaseOrder(id: string): Promise<PurchaseOrderDetail>
   // because Postgres `now()` is the transaction timestamp. That makes a receipt
   // event identifiable without a header table of its own.
   const movements =
-    lines.length === 0
+    lines.length === 0 || order.fxRate === null
       ? []
       : await db
           .select({
@@ -279,7 +281,7 @@ export async function getPurchaseOrder(id: string): Promise<PurchaseOrderDetail>
     receipt.lines.push({ sku: movement.sku, quantity: movement.quantity });
     receipt.valueGhs = add(
       receipt.valueGhs,
-      multiply(landedCostOf(movement.unitCostUsd, order.fxRate), movement.quantity),
+      multiply(landedCostOf(movement.unitCostUsd, order.fxRate!), movement.quantity),
     );
     receiptsByMoment.set(key, receipt);
   }
@@ -297,11 +299,17 @@ export async function getPurchaseOrder(id: string): Promise<PurchaseOrderDetail>
     lineCount: lines.length,
     fxRate: order.fxRate,
     totalUsd,
-    totalGhs: multiply(totalUsd, order.fxRate),
+    totalGhs: order.fxRate === null ? null : multiply(totalUsd, order.fxRate),
     orderedUnits,
     receivedUnits,
-    receivedGhs: sum(lines.map((l) => multiply(l.landedCost, l.quantityReceived))),
-    outstandingGhs: sum(lines.map((l) => multiply(l.landedCost, l.quantityOutstanding))),
+    receivedGhs:
+      order.fxRate === null
+        ? null
+        : sum(lines.map((l) => multiply(l.landedCost ?? '0', l.quantityReceived))),
+    outstandingGhs:
+      order.fxRate === null
+        ? null
+        : sum(lines.map((l) => multiply(l.landedCost ?? '0', l.quantityOutstanding))),
     lines,
     receipts: [...receiptsByMoment.values()],
   };
@@ -328,6 +336,12 @@ export async function receiveStock(
 
     // A draft has not been placed with anyone, and a cancelled or fully received
     // order has nothing left to arrive.
+    // Belt and braces against the invariant the send step enforces: an order
+    // cannot leave draft without a rate, so a receivable order always has one.
+    if (order.fxRate === null) {
+      throw ApiError.conflict('This order has no FX rate, so nothing can be costed against it');
+    }
+
     if (order.status !== 'sent' && order.status !== 'partially_received') {
       throw ApiError.conflict(
         `A ${order.status.replace('_', ' ')} purchase order cannot receive stock`,
@@ -772,4 +786,367 @@ export async function updateSettings(input: UpdateSettingsInput): Promise<Settin
     });
 
   return getSettings();
+}
+
+/* --------------------------------------------------------------- suppliers */
+
+/** Section 6.1. Suppliers are never deleted — one you stop using is switched to
+ *  inactive, so its purchase-order history stays intact and its past costs
+ *  remain explicable. An inactive supplier cannot be put on a new order. */
+
+export const supplierIdParam = z.object({ id: z.string().uuid() });
+export type SupplierIdParam = z.infer<typeof supplierIdParam>;
+
+export const listSuppliersQuery = z.object({
+  q: z.string().trim().min(1).max(100).optional(),
+  status: z.enum(['active', 'inactive', 'all']).default('active'),
+});
+export type ListSuppliersQuery = z.infer<typeof listSuppliersQuery>;
+
+const supplierFields = {
+  name: z.string().trim().min(1).max(200),
+  contactPerson: z.string().trim().max(200).nullish(),
+  phone: z.string().trim().max(50).nullish(),
+  email: z.string().trim().max(200).nullish(),
+  /** How the supplier invoices. It converts nothing on its own — conversion
+   *  happens once, on the purchase order, at the rate typed there. */
+  currency: z.string().trim().length(3).default('USD'),
+  paymentTerms: z.string().trim().max(100).nullish(),
+  isActive: z.boolean().default(true),
+};
+
+export const createSupplierInput = z.object(supplierFields);
+export type CreateSupplierInput = z.infer<typeof createSupplierInput>;
+
+export const updateSupplierInput = z.object(supplierFields).partial();
+export type UpdateSupplierInput = z.infer<typeof updateSupplierInput>;
+
+export const supplierRow = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  contactPerson: z.string().nullable(),
+  phone: z.string().nullable(),
+  email: z.string().nullable(),
+  currency: z.string(),
+  paymentTerms: z.string().nullable(),
+  isActive: z.boolean(),
+  /** Draft, sent or partially received — anything still in flight. */
+  openPurchaseOrders: z.number(),
+});
+export type SupplierRow = z.infer<typeof supplierRow>;
+
+export const supplierDetail = supplierRow.extend({
+  /** What has been ordered from them, in the currency they invoice in. */
+  purchasedToDateUsd: z.string(),
+  purchaseOrders: z.array(purchaseOrderSummary),
+});
+export type SupplierDetail = z.infer<typeof supplierDetail>;
+
+const OPEN_STATUSES = ['draft', 'sent', 'partially_received'] as const;
+
+export async function listSuppliers(query: ListSuppliersQuery): Promise<SupplierRow[]> {
+  const db = getDb();
+  const pattern = query.q ? `%${query.q.replace(/[%_\\]/g, (c) => `\\${c}`)}%` : null;
+
+  const rows = await db
+    .select({
+      id: suppliers.id,
+      name: suppliers.name,
+      contactPerson: suppliers.contactPerson,
+      phone: suppliers.phone,
+      email: suppliers.email,
+      currency: suppliers.currency,
+      paymentTerms: suppliers.paymentTerms,
+      isActive: suppliers.isActive,
+    })
+    .from(suppliers)
+    .where(
+      and(
+        query.status === 'all' ? undefined : eq(suppliers.isActive, query.status === 'active'),
+        pattern
+          ? sql`(${suppliers.name} ilike ${pattern} or ${suppliers.contactPerson} ilike ${pattern})`
+          : undefined,
+      ),
+    )
+    .orderBy(asc(suppliers.name));
+
+  // Counted separately rather than as a correlated subquery in the select:
+  // interpolating a column into raw SQL renders it unqualified, which inside a
+  // subquery with its own FROM silently resolves against the inner table. The
+  // comparison becomes po.supplier_id = po.id, which is never true, and the
+  // count comes back zero with no error to notice.
+  const counts = await db
+    .select({
+      supplierId: purchaseOrders.supplierId,
+      open: sql<number>`count(*)::int`,
+    })
+    .from(purchaseOrders)
+    .where(inArray(purchaseOrders.status, [...OPEN_STATUSES]))
+    .groupBy(purchaseOrders.supplierId);
+
+  const openBySupplier = new Map(counts.map((c) => [c.supplierId, c.open]));
+
+  return rows.map((row) => ({ ...row, openPurchaseOrders: openBySupplier.get(row.id) ?? 0 }));
+}
+
+export async function getSupplier(id: string): Promise<SupplierDetail> {
+  const [supplier] = await listSuppliersById(id);
+  if (!supplier) throw ApiError.notFound('Supplier not found');
+
+  const orders = await listPurchaseOrders({ supplierId: id });
+
+  return {
+    ...supplier,
+    // Every order carries its own rate, so the Cedi totals differ even at the
+    // same dollar cost. Summing them would add up figures agreed on different
+    // days; the dollar total is the one that means something.
+    purchasedToDateUsd: sum(
+      orders.filter((o) => o.status !== 'cancelled').map((o) => o.totalUsd),
+    ),
+    purchaseOrders: orders,
+  };
+}
+
+async function listSuppliersById(id: string): Promise<SupplierRow[]> {
+  const all = await listSuppliers({ status: 'all' });
+  return all.filter((s) => s.id === id);
+}
+
+export async function createSupplier(input: CreateSupplierInput): Promise<SupplierDetail> {
+  const [created] = await getDb()
+    .insert(suppliers)
+    .values({
+      name: input.name,
+      contactPerson: input.contactPerson ?? null,
+      phone: input.phone ?? null,
+      email: input.email ?? null,
+      currency: input.currency,
+      paymentTerms: input.paymentTerms ?? null,
+      isActive: input.isActive,
+    })
+    .returning();
+
+  return getSupplier(created!.id);
+}
+
+export async function updateSupplier(
+  id: string,
+  input: UpdateSupplierInput,
+): Promise<SupplierDetail> {
+  const [existing] = await getDb().select().from(suppliers).where(eq(suppliers.id, id)).limit(1);
+  if (!existing) throw ApiError.notFound('Supplier not found');
+
+  await getDb()
+    .update(suppliers)
+    .set({ ...input, updatedAt: new Date() })
+    .where(eq(suppliers.id, id));
+
+  return getSupplier(id);
+}
+
+/* ------------------------------------------------- creating purchase orders */
+
+const poLine = z.object({
+  partId: z.string().uuid(),
+  quantityOrdered: z.number().int().positive().max(1_000_000),
+  unitCostUsd: z.string().regex(/^\d+(\.\d{1,4})?$/, 'Expected a USD cost such as "11.80"'),
+});
+
+export const createPurchaseOrderInput = z.object({
+  supplierId: z.string().uuid(),
+  orderDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  /** GHS per USD. Optional while drafting; required to send. */
+  fxRate: z.string().regex(/^\d+(\.\d{1,6})?$/).nullish(),
+  lines: z.array(poLine).default([]),
+  /** Draft by default. `sent` goes straight out, and then needs a rate and a line. */
+  status: z.enum(['draft', 'sent']).default('draft'),
+});
+export type CreatePurchaseOrderInput = z.infer<typeof createPurchaseOrderInput>;
+
+export const updatePurchaseOrderInput = z.object({
+  supplierId: z.string().uuid().optional(),
+  orderDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  fxRate: z.string().regex(/^\d+(\.\d{1,6})?$/).nullish(),
+  /** Given, this replaces the lines wholesale — a draft is a working document,
+   *  and patching individual lines would need ids the screen does not carry. */
+  lines: z.array(poLine).optional(),
+});
+export type UpdatePurchaseOrderInput = z.infer<typeof updatePurchaseOrderInput>;
+
+async function assertSupplierUsable(tx: Tx, supplierId: string): Promise<void> {
+  const [supplier] = await tx
+    .select({ isActive: suppliers.isActive, name: suppliers.name })
+    .from(suppliers)
+    .where(eq(suppliers.id, supplierId))
+    .limit(1);
+
+  if (!supplier) throw ApiError.badRequest('Unknown supplier');
+  if (!supplier.isActive) {
+    throw ApiError.badRequest(`${supplier.name} is inactive and cannot take a new order`);
+  }
+}
+
+async function writeLines(
+  tx: Tx,
+  purchaseOrderId: string,
+  lines: CreatePurchaseOrderInput['lines'],
+): Promise<void> {
+  for (const line of lines) {
+    const [part] = await tx
+      .select({ id: parts.id, isActive: parts.isActive, name: parts.name })
+      .from(parts)
+      .where(eq(parts.id, line.partId))
+      .limit(1);
+
+    if (!part || !part.isActive) throw ApiError.badRequest(`Unknown part: ${line.partId}`);
+
+    await tx.insert(purchaseOrderLines).values({
+      purchaseOrderId,
+      partId: line.partId,
+      quantityOrdered: String(line.quantityOrdered),
+      unitCostUsd: line.unitCostUsd,
+    });
+  }
+}
+
+export async function createPurchaseOrder(
+  input: CreatePurchaseOrderInput,
+): Promise<PurchaseOrderDetail> {
+  if (input.status === 'sent') {
+    if (!input.fxRate) throw ApiError.badRequest('A purchase order needs an FX rate before it is sent');
+    if (input.lines.length === 0) throw ApiError.badRequest('A purchase order needs at least one line before it is sent');
+  }
+
+  const id = await getDb().transaction(async (tx) => {
+    await assertSupplierUsable(tx, input.supplierId);
+
+    const { rows } = await tx.execute<{ next: string }>(
+      sql`select nextval('app.purchase_order_number_seq')::text as next`,
+    );
+    const reference = `PO-${input.orderDate.slice(0, 4)}-${rows[0]!.next.padStart(4, '0')}`;
+
+    const [order] = await tx
+      .insert(purchaseOrders)
+      .values({
+        reference,
+        supplierId: input.supplierId,
+        status: input.status,
+        orderDate: input.orderDate,
+        fxRate: input.fxRate ?? null,
+      })
+      .returning();
+
+    await writeLines(tx, order!.id, input.lines);
+    return order!.id;
+  });
+
+  return getPurchaseOrder(id);
+}
+
+export async function updatePurchaseOrder(
+  id: string,
+  input: UpdatePurchaseOrderInput,
+): Promise<PurchaseOrderDetail> {
+  await getDb().transaction(async (tx) => {
+    const [order] = await tx
+      .select()
+      .from(purchaseOrders)
+      .where(eq(purchaseOrders.id, id))
+      .for('update')
+      .limit(1);
+
+    if (!order) throw ApiError.notFound('Purchase order not found');
+
+    // Once an order has gone out, its lines and its rate are what the supplier
+    // is working to. Changing them afterwards would rewrite the cost basis of
+    // stock already received against it.
+    if (order.status !== 'draft') {
+      throw ApiError.conflict(`A ${order.status.replace('_', ' ')} purchase order cannot be edited`);
+    }
+
+    if (input.supplierId) await assertSupplierUsable(tx, input.supplierId);
+
+    await tx
+      .update(purchaseOrders)
+      .set({
+        ...(input.supplierId ? { supplierId: input.supplierId } : {}),
+        ...(input.orderDate ? { orderDate: input.orderDate } : {}),
+        ...(input.fxRate !== undefined ? { fxRate: input.fxRate ?? null } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(purchaseOrders.id, id));
+
+    if (input.lines) {
+      await tx.delete(purchaseOrderLines).where(eq(purchaseOrderLines.purchaseOrderId, id));
+      await writeLines(tx, id, input.lines);
+    }
+  });
+
+  return getPurchaseOrder(id);
+}
+
+export async function sendPurchaseOrder(id: string): Promise<PurchaseOrderDetail> {
+  await getDb().transaction(async (tx) => {
+    const [order] = await tx
+      .select()
+      .from(purchaseOrders)
+      .where(eq(purchaseOrders.id, id))
+      .for('update')
+      .limit(1);
+
+    if (!order) throw ApiError.notFound('Purchase order not found');
+    if (order.status !== 'draft') {
+      throw ApiError.conflict(`That order is already ${order.status.replace('_', ' ')}`);
+    }
+
+    // The rate is required here rather than at the column, because "required"
+    // only becomes true at this moment. Everything costed against this order
+    // from now on uses it, including partial deliveries months later.
+    if (order.fxRate === null) {
+      throw ApiError.badRequest('A purchase order needs an FX rate before it is sent');
+    }
+
+    const lines = await tx
+      .select({ id: purchaseOrderLines.id })
+      .from(purchaseOrderLines)
+      .where(eq(purchaseOrderLines.purchaseOrderId, id));
+
+    if (lines.length === 0) {
+      throw ApiError.badRequest('A purchase order needs at least one line before it is sent');
+    }
+
+    await tx
+      .update(purchaseOrders)
+      .set({ status: 'sent', updatedAt: new Date() })
+      .where(eq(purchaseOrders.id, id));
+  });
+
+  return getPurchaseOrder(id);
+}
+
+export async function cancelPurchaseOrder(id: string): Promise<PurchaseOrderDetail> {
+  await getDb().transaction(async (tx) => {
+    const [order] = await tx
+      .select()
+      .from(purchaseOrders)
+      .where(eq(purchaseOrders.id, id))
+      .for('update')
+      .limit(1);
+
+    if (!order) throw ApiError.notFound('Purchase order not found');
+
+    // Stock that has already arrived cannot be un-received, and the prices it
+    // set are standing against it.
+    if (order.status === 'partially_received' || order.status === 'received') {
+      throw ApiError.conflict('Stock has already been received against this order');
+    }
+    if (order.status === 'cancelled') throw ApiError.conflict('That order is already cancelled');
+
+    await tx
+      .update(purchaseOrders)
+      .set({ status: 'cancelled', updatedAt: new Date() })
+      .where(eq(purchaseOrders.id, id));
+  });
+
+  return getPurchaseOrder(id);
 }

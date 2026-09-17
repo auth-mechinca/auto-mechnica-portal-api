@@ -78,6 +78,7 @@ describe('the OpenAPI document', () => {
     assert.ok(paths.some((p) => p.startsWith('/api/pos/')));
     assert.ok(paths.some((p) => p.startsWith('/api/backoffice/purchase-orders')));
     assert.ok(paths.some((p) => p.startsWith('/api/financial/')));
+    assert.ok(paths.some((p) => p.startsWith('/api/backoffice/suppliers')));
 
     // These routers are mounted and enforce roles but have no handlers. Once one
     // gains an endpoint, this test should be updated along with the document.
