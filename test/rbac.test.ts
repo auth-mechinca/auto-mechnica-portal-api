@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import request from 'supertest';
 import type { Server } from 'node:http';
 import { createApp } from '../src/app.js';
-import { signToken, type Role } from '../src/middleware/auth.js';
+import { signToken, type Role } from '../src/lib/token.js';
 
 /** Section 2 of the demo scope promises that a restricted role is stopped by the
  *  API, not by a hidden nav item. These tests are that promise, asserted. */

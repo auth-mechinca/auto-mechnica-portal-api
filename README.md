@@ -94,7 +94,8 @@ in-process.
 | Script | Does |
 |---|---|
 | `npm run db:up` | Start Postgres, wait until healthy |
-| `npm run db:setup` | `db:up` + `db:migrate` + `db:grant` — the one to run first |
+| `npm run db:setup` | `db:up` + `db:migrate` + `db:grant` + `db:seed` — the one to run first |
+| `npm run db:seed` | Demo data: four logins, parts, prices, stock, one open PO |
 | `npm run db:grant` | Grant the app role USAGE on `app` (see below) |
 | `npm run db:psql` | psql shell as the migration role |
 | `npm run db:down` | Stop the container, keep the data |
@@ -125,16 +126,55 @@ src/
     client.ts          pool + drizzle instance, exports Db and Tx types
     schema/            one file per domain, all re-exported from index.ts
   middleware/
-    auth.ts            requireAuth + requireRole
+    auth.ts            requireAuth, requireRole, currentUser
     error.ts           ApiError/ZodError -> JSON, everything else -> 500
-  lib/http.ts          ApiError, asyncHandler
+  lib/
+    http.ts            ApiError, asyncHandler
+    token.ts           JWT sign/verify and the role list
+    password.ts        hashing, and the constant-work verify
+    validate.ts        validateBody
   modules/
     auth/ pos/ ims/ financial/ backoffice/
+      routes.ts        wiring
+      service.ts       logic
+seeds/                 demo data; outside src/, so never compiled into dist
+  data.ts              the figures — edit here
+  money.ts             exact decimal arithmetic
+  index.ts             idempotent runner
 ```
 
-Business logic stays out of route handlers and off the ORM's happy path where
-money is involved — anything touching stock or money takes a `Tx`, not a `Db`, so
-it cannot run outside a transaction.
+### Module pattern
+
+Every module is two files, and the split is strict:
+
+| File | Holds | Must not hold |
+|---|---|---|
+| `routes.ts` | The router, role middleware, validation middleware, and the one line that calls the service | Any business rule, any query, any conditional |
+| `service.ts` | Business logic, database access, and the module's input schemas | `req`, `res`, `next`, status codes, or anything Express |
+
+```ts
+// routes.ts — wiring only
+authRouter.post(
+  '/login',
+  validateBody(service.loginInput),
+  asyncHandler(async (req, res) => {
+    res.json(await service.login(req.body));
+  }),
+);
+```
+
+A service takes plain values, returns plain values, and signals failure by
+throwing `ApiError`. The error middleware turns that into a status code, so the
+service never picks one. That is what keeps the logic callable from a seed
+script, a test, or a future job runner without faking a request object.
+
+Input schemas live in `service.ts` because they describe what the service
+accepts; the route mounts them with `validateBody`, so validation stays
+middleware and the handler receives exactly what the schema describes.
+
+Business logic stays off the ORM's happy path where money is involved — anything
+touching stock or money takes a `Tx`, not a `Db`, so it cannot run outside a
+transaction.
 
 ## RBAC
 
@@ -145,6 +185,30 @@ per-handler, so a newly added endpoint inherits the check rather than needing to
 remember it. This is what makes the demo's RBAC claim true: a `sales` token
 requesting any `/api/backoffice/*` path is refused by the API with a 403, not
 merely hidden from the navigation.
+
+## Demo data
+
+`npm run db:seed` is idempotent — catalogue, users, prices and settings upsert on
+their natural keys, so running it twice changes nothing. It connects as the
+ordinary application role, not the migration role, so a missing grant fails here
+rather than in production.
+
+Four logins, all with password `demo1234`: `sales@demo`, `purchasing@demo`,
+`accounts@demo`, `admin@demo`. Plus 8 parts with prices, stock and a price
+history row, 2 suppliers, 3 customers, and `PO-2026-0007` left **sent and
+unreceived** — the starting point of the demo's central story. Its FX rate is
+13.20 against the 12.50 the existing stock was bought at, so receiving it visibly
+moves the landed cost and the till price rather than reproducing them.
+
+Landed costs and suggested prices are computed in `seeds/money.ts`, never typed
+in, so the seed cannot disagree with what `receiveStock` will later calculate.
+That arithmetic runs on scaled integers: `18.40 * 12.5` in floating point is
+`229.99999999999997`.
+
+Stock is the one part that is not fully idempotent — balances reset to their
+opening figures and the opening movement is written once, so re-seeding a
+database that has since recorded sales leaves the ledger and the balance
+disagreeing. Run it after `db:reset` for a clean history; that is the normal case.
 
 ## Tests
 

@@ -4,5 +4,10 @@
     "noEmit": true,
     "rootDir": "."
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "drizzle.config.ts"]
+  "include": [
+    "src/**/*.ts",
+    "test/**/*.ts",
+    "seeds/**/*.ts",
+    "drizzle.config.ts"
+  ]
 }
