@@ -54,8 +54,9 @@ describe('receiving stock', () => {
       .where(eq(prices.partId, po.shock.partId))
       .limit(1);
 
-    // 291.40 x 1.35 = 393.39, exactly as the Prices screen shows.
-    assert.equal(row!.suggestedPrice, '393.39');
+    // A 35% margin on the SELLING price: 291.40 / 0.65 = 448.31. Selling at that
+    // leaves 156.91 on a 448.31 ticket, which is 35.00% of it.
+    assert.equal(row!.suggestedPrice, '448.31');
     assert.equal(row!.landedCost, '291.40');
   });
 

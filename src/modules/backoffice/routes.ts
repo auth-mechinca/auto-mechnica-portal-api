@@ -38,9 +38,52 @@ backofficeRouter.post(
   }),
 );
 
-// Suppliers (6.1) and Price Management (6.3) are still to come.
+/* Price management (6.3). The final price set here is the only price figure the
+ * Sales role ever sees — never the cost, never the suggestion. */
+
+backofficeRouter.get(
+  '/prices',
+  validateQuery(service.listPricesQuery),
+  asyncHandler(async (_req, res) => {
+    res.json(await service.listPrices(res.locals.query as service.ListPricesQuery));
+  }),
+);
+
+backofficeRouter.get(
+  '/prices/:partId',
+  validateParams(service.partIdParam),
+  asyncHandler(async (_req, res) => {
+    const { partId } = res.locals.params as service.PartIdParam;
+    res.json(await service.getPrice(partId));
+  }),
+);
+
+backofficeRouter.patch(
+  '/prices/:partId',
+  validateParams(service.partIdParam),
+  validateBody(service.setFinalPriceInput),
+  asyncHandler(async (req, res) => {
+    const { partId } = res.locals.params as service.PartIdParam;
+    res.json(await service.setFinalPrice(partId, req.body, currentUser(req).sub));
+  }),
+);
+
+backofficeRouter.get(
+  '/settings',
+  asyncHandler(async (_req, res) => {
+    res.json(await service.getSettings());
+  }),
+);
+
+backofficeRouter.patch(
+  '/settings',
+  validateBody(service.updateSettingsInput),
+  asyncHandler(async (req, res) => {
+    res.json(await service.updateSettings(req.body));
+  }),
+);
+
+// Suppliers (6.1) and creating a purchase order are still to come.
 // TODO GET/POST  /suppliers        -> service.listSuppliers / createSupplier
 // TODO GET/PATCH /suppliers/:id    -> service.getSupplier / updateSupplier
 // TODO POST      /purchase-orders  -> service.createPurchaseOrder
-// TODO GET       /prices           -> service.listPrices
-// TODO PATCH     /prices/:partId   -> service.setFinalPrice

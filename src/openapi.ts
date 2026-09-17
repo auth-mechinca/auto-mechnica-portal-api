@@ -85,6 +85,11 @@ export function buildOpenApiDocument(): Record<string, unknown> {
       { name: 'Auth', description: 'Sign in and identify the current user. Open to all roles.' },
       { name: 'Point of Sale', description: 'Section 3. Requires the **sales** or **admin** role.' },
       {
+        name: 'Prices',
+        description:
+          'Section 6.3. Requires the **purchasing** or **admin** role. The final price set here is the only price figure Sales ever sees.',
+      },
+      {
         name: 'Purchase Orders',
         description:
           'Section 6.2. Requires the **purchasing** or **admin** role. This is where a USD purchase cost becomes a Cedi price at the till.',
@@ -114,6 +119,11 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         PurchaseOrderDetail: jsonSchema(backofficeService.purchaseOrderDetail, 'output'),
         ReceiveStockRequest: jsonSchema(backofficeService.receiveStockInput, 'input'),
         ReceiveStockResult: jsonSchema(backofficeService.receiveStockResult, 'output'),
+        PriceRow: jsonSchema(backofficeService.priceRow, 'output'),
+        PriceDetail: jsonSchema(backofficeService.priceDetail, 'output'),
+        SetFinalPriceRequest: jsonSchema(backofficeService.setFinalPriceInput, 'input'),
+        Settings: jsonSchema(backofficeService.settingsResponse, 'output'),
+        UpdateSettingsRequest: jsonSchema(backofficeService.updateSettingsInput, 'input'),
       },
     },
     security: [{ bearerAuth: [] }],
@@ -175,6 +185,100 @@ export function buildOpenApiDocument(): Record<string, unknown> {
           responses: {
             200: { description: 'The current user', content: json(ref('User')) },
             401: AUTH_ERRORS[401],
+          },
+        },
+      },
+
+      '/api/backoffice/prices': {
+        get: {
+          tags: ['Prices'],
+          summary: 'Cost, suggestion and final price for every priced part',
+          description: [
+            'A part appears once it has been received against a cost; before that there',
+            'is nothing to price. `status` is derived, not stored:',
+            '',
+            '- `confirmed` — the final price equals the suggestion',
+            '- `overridden` — somebody set a different price deliberately',
+            '- `needs_review` — a price was set by hand and the cost has since moved,',
+            '  so the standing price is measured against a cost that no longer applies',
+            '',
+            '`needs_review` outranks `overridden`, because it is the row somebody has to',
+            'look at.',
+          ].join('\n'),
+          parameters: [
+            { name: 'q', in: 'query', required: false, schema: { type: 'string' }, description: 'Match name, SKU or brand' },
+            {
+              name: 'status',
+              in: 'query',
+              required: false,
+              schema: { type: 'string', enum: ['needs_review', 'overridden', 'confirmed'] },
+            },
+          ],
+          responses: {
+            200: { description: 'Priced parts, by name', content: json({ type: 'array', items: ref('PriceRow') }) },
+            ...AUTH_ERRORS,
+          },
+        },
+      },
+
+      '/api/backoffice/prices/{partId}': {
+        get: {
+          tags: ['Prices'],
+          summary: 'One price, with its cost basis and history',
+          description:
+            '`costBasis` names the purchase order the current cost came from, with the USD figure and the FX rate behind it. Nothing on this screen is typed by hand — to change the cost, change the purchase order.',
+          parameters: [{ name: 'partId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: {
+            200: { description: 'The price', content: json(ref('PriceDetail')) },
+            404: errorResponse('That part has no price yet'),
+            ...AUTH_ERRORS,
+          },
+        },
+        patch: {
+          tags: ['Prices'],
+          summary: 'Set the final sell price',
+          description:
+            'Saves the price and appends a history row recording who set it and which landed cost it was set against — which is what later makes `needs_review` derivable. This is the figure that appears in POS the moment it is saved.',
+          parameters: [{ name: 'partId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          requestBody: { required: true, content: json(ref('SetFinalPriceRequest')) },
+          responses: {
+            200: { description: 'Saved', content: json(ref('PriceDetail')) },
+            404: errorResponse('That part has no price yet'),
+            409: errorResponse('That part has no cost recorded yet'),
+            ...AUTH_ERRORS,
+          },
+        },
+      },
+
+      '/api/backoffice/settings': {
+        get: {
+          tags: ['Prices'],
+          summary: 'Shop-wide settings',
+          responses: {
+            200: { description: 'Current settings', content: json(ref('Settings')) },
+            ...AUTH_ERRORS,
+          },
+        },
+        patch: {
+          tags: ['Prices'],
+          summary: 'Change the global margin',
+          description: [
+            '`defaultMarginPct` is a margin **on the selling price**, not a markup on',
+            'cost: 35 means 35% of what the customer pays. The suggestion is therefore',
+            '`landed cost / (1 - margin/100)`, so a part costing 291.40 suggests 448.31,',
+            'not 393.39.',
+            '',
+            'Changing it affects what is suggested from here on. Prices already saved are',
+            'left alone — they were decisions taken at the margin of the day, and',
+            'rewriting them would silently reprice the catalogue.',
+          ].join('\n'),
+          requestBody: { required: true, content: json(ref('UpdateSettingsRequest')) },
+          responses: {
+            200: { description: 'Updated', content: json(ref('Settings')) },
+            // Spread first: the specific 400 below is the useful one, and
+            // ordering it after keeps it from being overwritten.
+            ...AUTH_ERRORS,
+            400: errorResponse('A margin must be under 100%'),
           },
         },
       },

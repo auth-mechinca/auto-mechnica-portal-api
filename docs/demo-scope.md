@@ -150,7 +150,11 @@ This is the most detail-sensitive module in the demo — the purchase → FX →
 **Screens:** Price List (all parts with cost, suggested price, final price), Price Edit
 
 **Confirmed flow:**
-1. Once a PO line is received, the system computes landed cost (6.2) and **auto-suggests a sell price**: `suggested price = landed cost × (1 + margin%)`, where margin% is a configurable setting (global default for the demo — per-category override is a future refinement, not demo scope)
+1. Once a PO line is received, the system computes landed cost (6.2) and **auto-suggests a sell price**: `suggested price = landed cost ÷ (1 − margin% ÷ 100)`, where margin% is a configurable setting (global default for the demo — per-category override is a future refinement, not demo scope)
+
+> **[CONFIRMED 17 September] margin% is a margin on the selling price, not a markup on cost.** 35% means 35% of what the customer pays, which is the accountant's reading — `margin = (price − cost) ÷ price`. The two diverge quickly: a part landing at GH₵ 291.40 suggests **GH₵ 448.31** under this rule, against GH₵ 393.39 if the same 35 were treated as a markup on cost. Equivalent markup at a 35% margin is 53.85%.
+>
+> Practical consequence worth stating plainly: because the number stayed at 35 while its meaning changed, **every suggested price rises by about 14%**. If the intent was to keep current prices and only correct the label, the setting should be about 26 rather than 35 — that is a one-line change to `default_margin_pct`, not a code change.
 2. Purchasing Officer/Admin reviews the suggested price and can **override it manually** — the final price is what gets saved
 3. The **final price** (not the suggested price) is what the Sales role sees in POS (Section 3) — sales staff never see cost or suggested price, only the final sell price, consistent with RBAC
 

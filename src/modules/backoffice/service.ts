@@ -10,11 +10,12 @@ import {
   purchaseOrderLines,
   purchaseOrders,
   stockMovements,
+  settings,
   suppliers,
   users,
 } from '../../db/schema/index.js';
 import { ApiError } from '../../lib/http.js';
-import { add, compare, multiply, sum } from '../../lib/money.js';
+import { add, compare, multiply, sum, suggestedPrice as suggestedPriceFor } from '../../lib/money.js';
 
 /** Suppliers, purchase orders and pricing. Section 6 of the demo scope.
  *
@@ -134,11 +135,9 @@ export type ReceiveStockResult = z.infer<typeof receiveStockResult>;
  *  with a later delivery. Section 6.2. */
 const landedCostOf = (unitCostUsd: string, fxRate: string) => multiply(unitCostUsd, fxRate);
 
-const suggestedFrom = (landed: string, marginPct: string) => {
-  // landed x (1 + margin/100), built as an exact decimal multiplier.
-  const multiplier = add('1', multiply(marginPct, '0.01', 4));
-  return multiply(landed, multiplier);
-};
+/** Deliberately not redefined here — `suggestedPrice` in lib/money.ts is the one
+ *  implementation of the pricing rule, shared with the seeds so the two cannot
+ *  drift apart on what a margin means. */
 
 /* -------------------------------------------------------------- reading */
 
@@ -401,7 +400,7 @@ export async function receiveStock(
       });
 
       const landedCost = landedCostOf(line.unitCostUsd, order.fxRate);
-      const suggestedPrice = suggestedFrom(landedCost, marginPct);
+      const suggested = suggestedPriceFor(landedCost, marginPct);
 
       const [existing] = await tx
         .select()
@@ -411,7 +410,7 @@ export async function receiveStock(
 
       // An override is a deliberate human decision and survives a new delivery.
       // A part nobody has priced yet takes the suggestion.
-      const finalPrice = existing?.finalPrice ?? suggestedPrice;
+      const finalPrice = existing?.finalPrice ?? suggested;
 
       // "Needs review" is derived, not stored: the landed cost the price was last
       // set against lives in price_history. If it has moved, the standing price
@@ -431,13 +430,19 @@ export async function receiveStock(
         .values({
           partId: line.partId,
           landedCost,
-          suggestedPrice,
+          suggestedPrice: suggested,
           finalPrice,
           marginPctUsed: marginPct,
         })
         .onConflictDoUpdate({
           target: prices.partId,
-          set: { landedCost, suggestedPrice, finalPrice, marginPctUsed: marginPct, updatedAt: new Date() },
+          set: {
+            landedCost,
+            suggestedPrice: suggested,
+            finalPrice,
+            marginPctUsed: marginPct,
+            updatedAt: new Date(),
+          },
         });
 
       // Append-only. changedBy stays null: the system re-suggested this, nobody
@@ -445,7 +450,7 @@ export async function receiveStock(
       await tx.insert(priceHistory).values({
         partId: line.partId,
         landedCost,
-        suggestedPrice,
+        suggestedPrice: suggested,
         finalPrice,
         marginPctUsed: marginPct,
         source: 'po_receipt',
@@ -458,7 +463,7 @@ export async function receiveStock(
         name: line.name,
         quantityReceived: String(quantityReceived),
         landedCost,
-        suggestedPrice,
+        suggestedPrice: suggested,
         finalPrice,
         needsReview,
         valueGhs: multiply(landedCost, String(quantityReceived)),
@@ -492,4 +497,279 @@ export async function receiveStock(
       valueReceivedGhs: sum(received.map((line) => line.valueGhs)),
     };
   });
+}
+
+/* --------------------------------------------------------- price management */
+
+/** The three states the Prices screen shows, derived rather than stored.
+ *
+ *  `needs_review` wins over `overridden`: a price that was deliberately set and
+ *  whose cost has since moved is the one someone has to look at, and saying only
+ *  "overridden" would bury exactly the row that matters. */
+export const priceStatus = z.enum(['needs_review', 'overridden', 'confirmed']);
+export type PriceStatus = z.infer<typeof priceStatus>;
+
+function statusOf(
+  landedCost: string,
+  suggested: string,
+  finalPrice: string,
+  lastManualLandedCost: string | null,
+): PriceStatus {
+  if (lastManualLandedCost !== null && compare(lastManualLandedCost, landedCost) !== 0) {
+    return 'needs_review';
+  }
+  return compare(finalPrice, suggested) === 0 ? 'confirmed' : 'overridden';
+}
+
+export const listPricesQuery = z.object({
+  q: z.string().trim().min(1).max(100).optional(),
+  status: priceStatus.optional(),
+});
+export type ListPricesQuery = z.infer<typeof listPricesQuery>;
+
+export const partIdParam = z.object({ partId: z.string().uuid() });
+export type PartIdParam = z.infer<typeof partIdParam>;
+
+export const setFinalPriceInput = z.object({
+  /** A string, like every other amount: a price is exact, not a float. */
+  finalPrice: z.string().regex(/^\d+(\.\d{1,2})?$/, 'Expected an amount such as "448.31"'),
+});
+export type SetFinalPriceInput = z.infer<typeof setFinalPriceInput>;
+
+export const priceRow = z.object({
+  partId: z.string().uuid(),
+  sku: z.string(),
+  name: z.string(),
+  brand: z.string().nullable(),
+  landedCost: z.string(),
+  suggestedPrice: z.string(),
+  finalPrice: z.string(),
+  marginPctUsed: z.string(),
+  status: priceStatus,
+  updatedAt: z.string(),
+});
+export type PriceRow = z.infer<typeof priceRow>;
+
+export const priceDetail = priceRow.extend({
+  /** Where the cost came from. Nothing on this screen is typed by hand — to
+   *  change the cost you change the purchase order. */
+  costBasis: z
+    .object({
+      purchaseOrderId: z.string().uuid(),
+      reference: z.string(),
+      unitCostUsd: z.string(),
+      fxRate: z.string(),
+    })
+    .nullable(),
+  history: z.array(
+    z.object({
+      at: z.string(),
+      source: z.enum(['po_receipt', 'manual']),
+      landedCost: z.string(),
+      suggestedPrice: z.string(),
+      finalPrice: z.string(),
+      marginPctUsed: z.string(),
+      changedBy: z.string().nullable(),
+      reference: z.string().nullable(),
+    }),
+  ),
+});
+export type PriceDetail = z.infer<typeof priceDetail>;
+
+type PriceQueryRow = {
+  partId: string;
+  sku: string;
+  name: string;
+  brand: string | null;
+  landedCost: string;
+  suggestedPrice: string;
+  finalPrice: string;
+  marginPctUsed: string;
+  updatedAt: string;
+  lastManualLandedCost: string | null;
+};
+
+export async function listPrices(query: ListPricesQuery): Promise<PriceRow[]> {
+  const db = getDb();
+  const pattern = query.q ? `%${query.q.replace(/[%_\\]/g, (c) => `\\${c}`)}%` : null;
+
+  // Only parts that have been priced appear here — a part nobody has ever
+  // received has no cost to price against and nothing to show.
+  const { rows } = await db.execute<PriceQueryRow>(sql`
+    select p.id                   as "partId",
+           p.sku,
+           p.name,
+           p.brand,
+           pr.landed_cost         as "landedCost",
+           pr.suggested_price     as "suggestedPrice",
+           pr.final_price         as "finalPrice",
+           pr.margin_pct_used     as "marginPctUsed",
+           pr.updated_at          as "updatedAt",
+           (select h.landed_cost
+              from ${priceHistory} h
+             where h.part_id = p.id and h.source = 'manual'
+             order by h.created_at desc
+             limit 1)             as "lastManualLandedCost"
+      from ${prices} pr
+      join ${parts} p on p.id = pr.part_id
+     where pr.final_price is not null
+       and (${pattern}::text is null
+            or p.name ilike ${pattern} or p.sku ilike ${pattern} or p.brand ilike ${pattern})
+     order by p.name
+  `);
+
+  const withStatus = rows.map((row) => ({
+    partId: row.partId,
+    sku: row.sku,
+    name: row.name,
+    brand: row.brand,
+    landedCost: row.landedCost,
+    suggestedPrice: row.suggestedPrice,
+    finalPrice: row.finalPrice,
+    marginPctUsed: row.marginPctUsed,
+    updatedAt: new Date(row.updatedAt).toISOString(),
+    status: statusOf(row.landedCost, row.suggestedPrice, row.finalPrice, row.lastManualLandedCost),
+  }));
+
+  // Filtered here rather than in SQL because the status is derived from a
+  // comparison, not stored. The catalogue is small enough that this is honest
+  // rather than lazy; it would need rethinking at thousands of parts.
+  return query.status ? withStatus.filter((row) => row.status === query.status) : withStatus;
+}
+
+export async function getPrice(partId: string): Promise<PriceDetail> {
+  const db = getDb();
+
+  const [row] = await listPricesFor(partId);
+  if (!row) throw ApiError.notFound('That part has no price yet');
+
+  const historyRows = await db
+    .select({
+      at: priceHistory.createdAt,
+      source: priceHistory.source,
+      landedCost: priceHistory.landedCost,
+      suggestedPrice: priceHistory.suggestedPrice,
+      finalPrice: priceHistory.finalPrice,
+      marginPctUsed: priceHistory.marginPctUsed,
+      changedBy: users.fullName,
+      reference: purchaseOrders.reference,
+      purchaseOrderId: purchaseOrders.id,
+      unitCostUsd: purchaseOrderLines.unitCostUsd,
+      fxRate: purchaseOrders.fxRate,
+    })
+    .from(priceHistory)
+    .leftJoin(users, eq(users.id, priceHistory.changedBy))
+    .leftJoin(purchaseOrderLines, eq(purchaseOrderLines.id, priceHistory.referenceId))
+    .leftJoin(purchaseOrders, eq(purchaseOrders.id, purchaseOrderLines.purchaseOrderId))
+    .where(eq(priceHistory.partId, partId))
+    .orderBy(desc(priceHistory.createdAt));
+
+  const latestReceipt = historyRows.find((h) => h.source === 'po_receipt' && h.purchaseOrderId);
+
+  return {
+    ...row,
+    costBasis: latestReceipt
+      ? {
+          purchaseOrderId: latestReceipt.purchaseOrderId!,
+          reference: latestReceipt.reference!,
+          unitCostUsd: latestReceipt.unitCostUsd!,
+          fxRate: latestReceipt.fxRate!,
+        }
+      : null,
+    history: historyRows.map((h) => ({
+      at: h.at.toISOString(),
+      source: h.source,
+      landedCost: h.landedCost ?? '0.00',
+      suggestedPrice: h.suggestedPrice ?? '0.00',
+      finalPrice: h.finalPrice ?? '0.00',
+      marginPctUsed: h.marginPctUsed ?? '0.00',
+      changedBy: h.changedBy,
+      reference: h.reference,
+    })),
+  };
+}
+
+/** Shared by the list and the detail so both agree on how a status is reached. */
+async function listPricesFor(partId: string): Promise<PriceRow[]> {
+  const all = await listPrices({});
+  return all.filter((row) => row.partId === partId);
+}
+
+export async function setFinalPrice(
+  partId: string,
+  input: SetFinalPriceInput,
+  changedBy: string,
+): Promise<PriceDetail> {
+  await getDb().transaction(async (tx) => {
+    const [existing] = await tx
+      .select()
+      .from(prices)
+      .where(eq(prices.partId, partId))
+      .for('update')
+      .limit(1);
+
+    if (!existing) throw ApiError.notFound('That part has no price yet');
+    if (existing.landedCost === null || existing.suggestedPrice === null) {
+      throw ApiError.conflict('That part has no cost recorded yet — receive it on a purchase order first');
+    }
+
+    await tx
+      .update(prices)
+      .set({ finalPrice: input.finalPrice, updatedAt: new Date() })
+      .where(eq(prices.partId, partId));
+
+    // Append-only, and attributed: this is the row that later tells us which cost
+    // the price was set against, which is what makes "needs review" derivable.
+    await tx.insert(priceHistory).values({
+      partId,
+      landedCost: existing.landedCost,
+      suggestedPrice: existing.suggestedPrice,
+      finalPrice: input.finalPrice,
+      marginPctUsed: existing.marginPctUsed,
+      source: 'manual',
+      changedBy,
+    });
+  });
+
+  return getPrice(partId);
+}
+
+/* ---------------------------------------------------------------- settings */
+
+export const settingsResponse = z.object({
+  defaultMarginPct: z.string(),
+  defaultPaymentTermsDays: z.string(),
+});
+export type SettingsResponse = z.infer<typeof settingsResponse>;
+
+export const updateSettingsInput = z.object({
+  /** Below 100 because a margin is a share of the selling price: at 100% the
+   *  price would have to be infinite, and beyond it, negative. */
+  defaultMarginPct: z
+    .string()
+    .regex(/^\d+(\.\d{1,2})?$/)
+    .refine((value) => Number(value) < 100, 'A margin must be under 100%'),
+});
+export type UpdateSettingsInput = z.infer<typeof updateSettingsInput>;
+
+export async function getSettings(): Promise<SettingsResponse> {
+  return getDb().transaction(async (tx) => ({
+    defaultMarginPct: await settingValue(tx, 'default_margin_pct', '35'),
+    defaultPaymentTermsDays: await settingValue(tx, 'default_payment_terms_days', '30'),
+  }));
+}
+
+/** Changes what future receipts and price screens suggest. Prices already saved
+ *  are left alone: they were decisions taken at the margin of the day, and
+ *  rewriting them would silently reprice the whole catalogue. */
+export async function updateSettings(input: UpdateSettingsInput): Promise<SettingsResponse> {
+  await getDb()
+    .insert(settings)
+    .values({ key: 'default_margin_pct', value: input.defaultMarginPct })
+    .onConflictDoUpdate({
+      target: settings.key,
+      set: { value: input.defaultMarginPct, updatedAt: new Date() },
+    });
+
+  return getSettings();
 }

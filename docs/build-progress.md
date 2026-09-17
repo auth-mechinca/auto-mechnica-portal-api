@@ -13,13 +13,14 @@
 | Auth, RBAC, sign-out | **Done** — login, JWT with revocable sessions, server-side role checks |
 | POS | **Done** — part search, recording a sale, reading the receipt back |
 | Backoffice — purchase orders | **Done** — list, detail, receive stock with the full cost-to-price chain |
-| Backoffice — suppliers, price management | **Not started** — routers mounted, no handlers |
+| Backoffice — price management | **Done** — list with derived status, cost basis and history, set a price, change the shop margin |
+| Backoffice — suppliers, PO create | **Not started** — routers mounted, no handlers |
 | IMS | **Not started** — router mounted, no handlers |
 | Financial Core | **Not started** — router mounted, no handlers |
 | Next.js frontend | **Not started** — repo is an empty initial commit |
 | API documentation | **Done** — OpenAPI 3.1 at `/openapi.json`, Swagger UI at `/docs` |
 
-**109 tests pass.** The spine of the demo now works end to end on the server: receive a purchase order at a new FX rate, watch the landed cost and suggested price move, then sell the part at the till and watch stock and the customer balance follow. What is missing is a face — nothing is wired to a screen yet.
+**123 tests pass.** The spine of the demo now works end to end on the server: receive a purchase order at a new FX rate, watch the landed cost and suggested price move, then sell the part at the till and watch stock and the customer balance follow. What is missing is a face — nothing is wired to a screen yet.
 
 ---
 
@@ -95,6 +96,10 @@ Every module is two files, and the split is strict. `routes.ts` holds the router
 | `GET /api/backoffice/purchase-orders` | purchasing | Filter by status and supplier |
 | `GET /api/backoffice/purchase-orders/:id` | purchasing | Lines, landed costs, delivery history |
 | `POST /api/backoffice/purchase-orders/:id/receive` | purchasing | The cost-to-price chain |
+| `GET /api/backoffice/prices` | purchasing | Landed, suggested, final, with a derived status and filters |
+| `GET /api/backoffice/prices/:partId` | purchasing | Cost basis — which PO, which USD cost, which rate — and full history |
+| `PATCH /api/backoffice/prices/:partId` | purchasing | Set the final price; appears in POS immediately |
+| `GET`/`PATCH /api/backoffice/settings` | purchasing | The global margin |
 
 Admin reaches everything.
 
@@ -124,6 +129,22 @@ Verified against the seeded `PO-2026-0007`. Receiving 20 brake pads and 30 of 50
 
 Sales still sees 310.00, and no cost field appears in the payload at all.
 
+### Price management
+
+The Prices screen's three states are derived, never stored. `confirmed` means the
+final price equals the suggestion; `overridden` means somebody chose differently;
+`needs_review` means a price was set by hand and the cost has since moved, so the
+standing price is measured against a cost that no longer applies. `needs_review`
+outranks `overridden`, because it is the row somebody actually has to look at.
+
+Setting a price appends to `price_history` with who set it and the landed cost it
+was set against — which is precisely what makes `needs_review` a comparison
+rather than a flag anyone has to remember to raise.
+
+Changing the global margin affects what is suggested from then on. Prices already
+saved are left alone: they were decisions taken at the margin of the day, and
+recomputing them would silently reprice the catalogue.
+
 ### Money
 
 Every amount is `numeric` in Postgres and a string in transit — `"310.00"`, never `310`. Arithmetic runs on scaled integers in `src/lib/money.ts`, shared with the seeds so the two cannot disagree. `18.40 × 12.5` in floating point is `229.99999999999997`; there is a test that says so.
@@ -151,6 +172,8 @@ The cost is one indexed lookup per request, affordable precisely because the API
 | A walk-in's payment | `payments.customer_id` became nullable, matching `sales_invoices`. A cheque still requires a named customer — a bounced cheque attached to nobody is a debt with no one to chase |
 | Invoice numbering | A Postgres sequence. `max(reference) + 1` lets two tills read the same number, and the unique index would then reject one sale outright |
 | Overridden price meeting a new cost | **The override stands and the part is flagged for review.** Answered below |
+| What "margin" means | A margin **on the selling price**, not a markup on cost. `price = cost ÷ (1 − margin ÷ 100)` |
+| Changing the global margin | Affects future suggestions only; saved prices are decisions, not derivations |
 | Logout | Server-side revocation, not client-side forgetting |
 
 ### The overridden-price question, answered
@@ -163,9 +186,16 @@ An earlier note said `prices` already had a review state and that option (b) was
 
 ## 5. Still open — needs a call
 
-**1. "Margin" is a markup, and the screens call it a margin.** 35% here means 35% *on top of cost*. Sell a part that cost GH₵ 291.40 at GH₵ 393.39 and the profit is GH₵ 101.99 — 26% of the selling price, not 35%. Accountants normally mean the second thing.
+**1. The wireframes still show markup-era prices.** Resolved in the code, not yet on the canvas.
 
-If the owner means 35% of the selling price, the number in the box should be 54%, not 35%. This is the one that matters before the client sees the deck: the figures run continuously across all 26 screens and through the API, so if the markup is wrong, every downstream number is wrong. A one-word label change today; an argument after the demo.
+*Margin now means margin on the selling price* — 35% of what the customer pays, the accountant's reading, confirmed 17 September. `suggested = landed ÷ (1 − margin ÷ 100)`. The API, the seeds and the tests all moved together.
+
+The 26 artboards did not. They still show GH₵ 393.39 where the API now says GH₵ 448.31, and PriceEdit's "36.9% on cost" no longer describes what the system does. Anyone reading the canvas and the API side by side will see them disagree.
+
+Two things to settle:
+
+- The artboards need their figures regenerating before the client sees them.
+- **The number stayed at 35 while its meaning changed, so every suggested price rises by about 14%.** If the intent was to keep today's prices and only fix the label, `default_margin_pct` should be about 26. Worth confirming which the owner actually wants — it is a settings change, not a code change.
 
 **2. Post-dated cheques.** Common here, and the schema cannot represent one. Adding a cheque date is small; deciding whether the demo needs it is the question.
 
@@ -187,13 +217,11 @@ Added during the wireframing and API passes: per-customer payment terms, credit 
 
 ## 7. What's next
 
-Two candidates, and they are close.
+**Financial Core.** It has the most screens with nothing behind them, and POS is already writing the invoices, cheques and allocations it would read. The Cheque Queue is the cheapest win — a pending cheque exists the moment a sale is made on one.
 
-**Price Management** (`GET /prices`, `PATCH /prices/:partId`) closes the loop that receiving stock opened: something has to let a human act on the parts now flagged for review, and it is the last piece of the purchase-to-till story.
+After that, suppliers and PO Create — which is where the draft `fx_rate NOT NULL` mismatch has to be resolved — and IMS last, since it is mostly catalogue maintenance and receiving already covers the stock movements that matter.
 
-**Financial Core** has the most screens with nothing behind them, and POS is already writing the invoices, cheques and allocations it would read. The Cheque Queue is the cheapest win — a pending cheque exists the moment a sale is made on one.
-
-Either leaves IMS last, which is right: it is mostly catalogue maintenance, and receiving already covers the stock movements that matter.
+The purchase-to-till chain is now complete end to end on the server: receive a purchase order at a new rate, watch the landed cost and suggestion move, see the part flagged for review, confirm a price, and find that exact figure at the till. That is the story Section 6.3 describes, and it runs.
 
 The frontend remains untouched. At some point that becomes the critical path, since none of the above is demonstrable without it.
 

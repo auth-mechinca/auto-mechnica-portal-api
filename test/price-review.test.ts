@@ -36,15 +36,15 @@ describe('an overridden price meeting a new cost', () => {
     await db.insert(prices).values({
       partId: po.shock.partId,
       landedCost: '291.40',
-      suggestedPrice: '393.39',
-      finalPrice: '372.00',
+      suggestedPrice: '448.31',
+      finalPrice: '430.00',
       marginPctUsed: '35',
     });
     await db.insert(priceHistory).values({
       partId: po.shock.partId,
       landedCost: '291.40',
-      suggestedPrice: '393.39',
-      finalPrice: '372.00',
+      suggestedPrice: '448.31',
+      finalPrice: '430.00',
       marginPctUsed: '35',
       source: 'manual',
       changedBy: base.sellerId,
@@ -58,7 +58,7 @@ describe('an overridden price meeting a new cost', () => {
 
     const shock = result.received[0]!;
     assert.equal(shock.landedCost, '291.40', 'same rate, same cost');
-    assert.equal(shock.finalPrice, '372.00', 'the override stands');
+    assert.equal(shock.finalPrice, '430.00', 'the override stands');
     assert.equal(shock.needsReview, false, 'nothing has changed to review');
   });
 
@@ -67,15 +67,15 @@ describe('an overridden price meeting a new cost', () => {
     await db.insert(prices).values({
       partId: po.waterPump.partId,
       landedCost: '205.00',
-      suggestedPrice: '276.75',
-      finalPrice: '289.00',
+      suggestedPrice: '315.38',
+      finalPrice: '325.00',
       marginPctUsed: '35',
     });
     await db.insert(priceHistory).values({
       partId: po.waterPump.partId,
       landedCost: '205.00',
-      suggestedPrice: '276.75',
-      finalPrice: '289.00',
+      suggestedPrice: '315.38',
+      finalPrice: '325.00',
       marginPctUsed: '35',
       source: 'manual',
       changedBy: base.sellerId,
@@ -90,7 +90,7 @@ describe('an overridden price meeting a new cost', () => {
     const pump = result.received[0]!;
     // 17.20 x 12.4000 = 213.28, against the 205.00 it was priced at.
     assert.equal(pump.landedCost, '213.28');
-    assert.equal(pump.finalPrice, '289.00', 'the human decision is not thrown away');
+    assert.equal(pump.finalPrice, '325.00', 'the human decision is not thrown away');
     assert.equal(pump.needsReview, true, 'but the cost it was set against has moved');
 
     const [stored] = await db
@@ -99,9 +99,9 @@ describe('an overridden price meeting a new cost', () => {
       .where(eq(prices.partId, po.waterPump.partId))
       .limit(1);
 
-    assert.equal(stored!.finalPrice, '289.00');
+    assert.equal(stored!.finalPrice, '325.00');
     assert.equal(stored!.landedCost, '213.28', 'the cost is updated even though the price is not');
-    assert.equal(stored!.suggestedPrice, '287.93', '213.28 x 1.35');
+    assert.equal(stored!.suggestedPrice, '328.12', '213.28 / 0.65');
   });
 
   it('does not flag a part nobody had priced by hand', async () => {

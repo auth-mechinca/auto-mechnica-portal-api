@@ -56,6 +56,21 @@ export function compare(a: string, b: string): -1 | 0 | 1 {
   return aInt === bInt ? 0 : aInt < bInt ? -1 : 1;
 }
 
+/** Exact division, rounded half-up to `dp`. Positive values only. */
+export function divide(a: string, b: string, dp = 2): string {
+  const [aInt, aDp] = split(a);
+  const [bInt, bDp] = split(b);
+  if (bInt === 0n) throw new RangeError('Division by zero');
+
+  // a/b scaled to dp: (aInt * 10^(bDp + dp)) / (bInt * 10^aDp)
+  const numerator = aInt * 10n ** BigInt(bDp + dp);
+  const denominator = bInt * 10n ** BigInt(aDp);
+
+  const quotient = numerator / denominator;
+  const remainder = numerator % denominator;
+  return format(remainder * 2n >= denominator ? quotient + 1n : quotient, dp);
+}
+
 export function subtract(a: string, b: string): string {
   const [aInt, bInt, dp] = align(a, b);
   return format(aInt - bInt, dp);
@@ -66,12 +81,30 @@ export function subtract(a: string, b: string): string {
 export const landedCost = (unitCostUsd: string, fxRate: string): string =>
   multiply(unitCostUsd, fxRate);
 
-/** suggested price = landed cost x (1 + margin%/100). Section 6.3.
+/** suggested price, from a margin **on the selling price**. Section 6.3.
  *
- *  The multiplier is built as an exact decimal string — a 35% margin becomes
- *  '1.35' by integer arithmetic, never by dividing in floating point. */
-export const suggestedPrice = (landed: string, marginPct: string): string => {
-  const [marginInt, marginDp] = split(marginPct);
-  const multiplier = format(marginInt + 100n * 10n ** BigInt(marginDp), marginDp + 2);
-  return multiply(landed, multiplier);
-};
+ *  This is the accountant's definition, confirmed with the client: a 35% margin
+ *  means 35% of what the customer pays, not 35% added to cost.
+ *
+ *      margin = (price - cost) / price
+ *   => price  = cost / (1 - margin/100)
+ *             = cost * 100 / (100 - margin)
+ *
+ *  It is worth being explicit because the two readings diverge quickly. At 35%,
+ *  a markup on cost multiplies by 1.35; a margin on price multiplies by 1.538.
+ *  On a part costing GH¢ 291.40 that is GH¢ 393.39 against GH¢ 448.31.
+ *
+ *  Expressed as a division by a whole number rather than by a decimal, so the
+ *  rounding happens once, at the end.
+ */
+export function suggestedPrice(landed: string, marginPct: string): string {
+  const share = subtract('100', marginPct);
+
+  // A 100% margin would mean selling at infinity, and beyond that the price
+  // turns negative — nonsense that should fail loudly rather than quietly.
+  if (compare(share, '0') <= 0) {
+    throw new RangeError(`A margin of ${marginPct}% leaves nothing to price against`);
+  }
+
+  return divide(multiply(landed, '100', 4), share);
+}
