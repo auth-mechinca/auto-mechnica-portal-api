@@ -1,8 +1,14 @@
 # auto-mechnica-portal-api
 
-Express + TypeScript API for the Auto Mechanica demo. Scope lives in
-`Demo Scope - Auto-Parts Business System.md` in the parent directory; section
-numbers referenced in code comments point at that document.
+Express + TypeScript API for the Auto Mechanica demo.
+
+| Document | |
+|---|---|
+| [`docs/demo-scope.md`](docs/demo-scope.md) | The scope of record — what was agreed. Section numbers in code comments point here |
+| [`docs/build-progress.md`](docs/build-progress.md) | What actually exists, what is still open, and what is next |
+
+They live in this repo so that a decision and the code implementing it move
+together.
 
 ## Deployment shape
 
