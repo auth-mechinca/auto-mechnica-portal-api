@@ -1,6 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import swaggerUi from 'swagger-ui-express';
+import { buildOpenApiDocument } from './openapi.js';
 import { env } from './config/env.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 import { authRouter } from './modules/auth/routes.js';
@@ -17,6 +19,25 @@ export function createApp() {
   app.use(express.json({ limit: '1mb' }));
 
   app.get('/health', (_req, res) => res.json({ ok: true }));
+
+  // Built once per process: the schemas it reads are module-level constants, so
+  // regenerating per request would buy nothing.
+  const openApiDocument = buildOpenApiDocument();
+
+  // Deliberately unauthenticated. The document describes the shape of the API,
+  // not its data, and a developer cannot get a token without an account anyway.
+  app.get('/openapi.json', (_req, res) => res.json(openApiDocument));
+  app.use(
+    '/docs',
+    // Swagger UI's own assets need inline styles, which helmet's default CSP
+    // forbids. Scoped to this path so the rest of the app keeps the strict policy.
+    helmet({ contentSecurityPolicy: false }),
+    swaggerUi.serve,
+    swaggerUi.setup(openApiDocument, {
+      customSiteTitle: 'Auto Mechanica API',
+      swaggerOptions: { persistAuthorization: true, displayRequestDuration: true },
+    }),
+  );
 
   // One module per mount point, matching the folder layout in Section 1 of the
   // demo scope. Each router applies its own role check as router-level

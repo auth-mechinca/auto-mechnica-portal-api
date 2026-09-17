@@ -1,8 +1,17 @@
 import { appSchema } from './schema.js';
-import { boolean, date, index, text, uuid } from 'drizzle-orm/pg-core';
+import { boolean, date, index, text, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { ghs, primaryKey, qty, timestamps } from './common.js';
 import { parts } from './catalog.js';
 import { users } from './auth.js';
+
+/** Invoice numbers come from a sequence rather than counting existing rows:
+ *  `max(reference) + 1` inside a transaction lets two concurrent tills read the
+ *  same number, and the unique index above would then reject one sale outright.
+ *  A sequence hands out a distinct value without blocking either. */
+export const invoiceNumberSeq = appSchema.sequence('invoice_number_seq', {
+  startWith: 1,
+  increment: 1,
+});
 
 export const customers = appSchema.table('customers', {
   id: primaryKey(),
@@ -37,6 +46,9 @@ export const salesInvoices = appSchema.table(
   },
   (t) => [
     index('sales_invoices_customer_idx').on(t.customerId),
+    // The number printed on the customer's receipt. Two invoices sharing one is
+    // a real-world problem, not merely a data one.
+    uniqueIndex('sales_invoices_reference_idx').on(t.reference),
     // Every ageing query on the Customer Accounts screen filters on this.
     index('sales_invoices_due_date_idx').on(t.dueDate),
   ],

@@ -1,4 +1,5 @@
 import type { RequestHandler } from 'express';
+import { isRevoked } from '../db/revocations.js';
 import { ApiError } from '../lib/http.js';
 import { verifyToken, type AuthUser, type Role } from '../lib/token.js';
 
@@ -15,12 +16,23 @@ export const requireAuth: RequestHandler = (req, _res, next) => {
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) return next(ApiError.unauthorized());
 
+  let user: AuthUser;
   try {
-    req.user = verifyToken(header.slice('Bearer '.length));
-    next();
+    user = verifyToken(header.slice('Bearer '.length));
   } catch {
-    next(ApiError.unauthorized('Invalid or expired token'));
+    return next(ApiError.unauthorized('Invalid or expired token'));
   }
+
+  // A valid signature is not the same as a live session. Checked on every
+  // request, because that is the only point at which a signed-out token can be
+  // stopped.
+  isRevoked(user.jti)
+    .then((revoked) => {
+      if (revoked) return next(ApiError.unauthorized('This session has been signed out'));
+      req.user = user;
+      next();
+    })
+    .catch(next);
 };
 
 /** The whole point of the RBAC demo: this runs on the server for every request,

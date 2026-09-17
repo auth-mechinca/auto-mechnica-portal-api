@@ -46,6 +46,8 @@ export const SUPPLIERS = [
 
 /** `finalPrice` is the number a human settled on — deliberately not equal to the
  *  computed suggestion, because that override is the thing the demo shows off.
+ *  They sit near a 35% margin of the selling price, which is what
+ *  `default_margin_pct` now means.
  *  Three parts sit below their reorder point so Low Stock is not an empty table. */
 export const PARTS = [
   {
@@ -57,7 +59,7 @@ export const PARTS = [
     category: 'Braking',
     fitment: ['2014-2019 Toyota Corolla 1.8L', '2013-2018 Toyota Auris 1.6L'],
     unitCostUsd: '18.4000',
-    finalPrice: '310.00',
+    finalPrice: '350.00',
     reorderPoint: 10,
     openingStock: '24',
   },
@@ -70,7 +72,7 @@ export const PARTS = [
     category: 'Filters',
     fitment: ['2010-2020 Toyota Corolla', '2012-2019 Nissan Sentra'],
     unitCostUsd: '4.2000',
-    finalPrice: '70.00',
+    finalPrice: '80.00',
     reorderPoint: 20,
     openingStock: '60',
   },
@@ -83,7 +85,7 @@ export const PARTS = [
     category: 'Ignition',
     fitment: ['2009-2018 Toyota Camry 2.5L', '2011-2017 Honda Accord 2.4L'],
     unitCostUsd: '3.6000',
-    finalPrice: '60.00',
+    finalPrice: '70.00',
     reorderPoint: 24,
     openingStock: '8',
   },
@@ -96,7 +98,7 @@ export const PARTS = [
     category: 'Electrical',
     fitment: ['2007-2013 Nissan Altima 2.5L'],
     unitCostUsd: '86.0000',
-    finalPrice: '1450.00',
+    finalPrice: '1650.00',
     reorderPoint: 2,
     openingStock: '3',
   },
@@ -109,7 +111,7 @@ export const PARTS = [
     category: 'Suspension',
     fitment: ['2008-2012 Honda Accord 2.4L'],
     unitCostUsd: '32.5000',
-    finalPrice: '550.00',
+    finalPrice: '625.00',
     reorderPoint: 6,
     openingStock: '12',
   },
@@ -122,7 +124,7 @@ export const PARTS = [
     category: 'Electrical',
     fitment: ['Universal — DIN L3 terminal'],
     unitCostUsd: '54.0000',
-    finalPrice: '910.00',
+    finalPrice: '1040.00',
     reorderPoint: 8,
     openingStock: '5',
   },
@@ -135,7 +137,7 @@ export const PARTS = [
     category: 'Accessories',
     fitment: ['Universal — hook fitting'],
     unitCostUsd: '6.8000',
-    finalPrice: '115.00',
+    finalPrice: '130.00',
     reorderPoint: 15,
     openingStock: '40',
   },
@@ -148,7 +150,7 @@ export const PARTS = [
     category: 'Transmission',
     fitment: ['2011-2016 Toyota Corolla 1.6L Manual'],
     unitCostUsd: '74.0000',
-    finalPrice: '1250.00',
+    finalPrice: '1425.00',
     reorderPoint: 3,
     openingStock: '2',
   },

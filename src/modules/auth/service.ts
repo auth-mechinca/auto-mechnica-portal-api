@@ -4,7 +4,8 @@ import { getDb } from '../../db/client.js';
 import { users } from '../../db/schema/index.js';
 import { ApiError } from '../../lib/http.js';
 import { verifyPassword } from '../../lib/password.js';
-import { signToken } from '../../lib/token.js';
+import { purgeExpiredRevocations, revokeToken } from '../../db/revocations.js';
+import { expiryOf, ROLES, signToken, type AuthUser } from '../../lib/token.js';
 
 /* Input contracts. Declared here because they describe what this service
  * accepts; the route mounts them as validation middleware. */
@@ -16,13 +17,17 @@ export const loginInput = z.object({
 export type LoginInput = z.infer<typeof loginInput>;
 
 /** What the API is willing to say about a user. Everything else on the row —
- *  the password hash above all — stays here. */
-type PublicUser = {
-  id: string;
-  email: string;
-  fullName: string;
-  role: (typeof users.$inferSelect)['role'];
-};
+ *  the password hash above all — stays here. Declared as a schema so the
+ *  OpenAPI document and the compiler agree on the shape. */
+export const publicUser = z.object({
+  id: z.string().uuid(),
+  email: z.string(),
+  fullName: z.string(),
+  role: z.enum(ROLES),
+});
+export type PublicUser = z.infer<typeof publicUser>;
+
+export const loginResponse = z.object({ token: z.string(), user: publicUser });
 
 const toPublicUser = (user: typeof users.$inferSelect): PublicUser => ({
   id: user.id,
@@ -60,3 +65,21 @@ export async function getCurrentUser(userId: string): Promise<PublicUser> {
   if (!user || !user.isActive) throw ApiError.unauthorized();
   return toPublicUser(user);
 }
+
+/** Signing out.
+ *
+ *  Records this token as revoked so the middleware refuses it from here on. It
+ *  does not touch the user's other sessions: a salesperson signing out of the
+ *  till should not be signed out on their phone.
+ *
+ *  Idempotent — signing out twice is not an error, the second is already true.
+ *  The sweep of expired revocations rides along here because sign-out is the
+ *  only moment the table grows, which keeps the process free of a timer.
+ */
+export async function logout(user: AuthUser): Promise<{ revokedAt: string }> {
+  await revokeToken(user.jti, user.sub, expiryOf(user));
+  await purgeExpiredRevocations();
+  return { revokedAt: new Date().toISOString() };
+}
+
+export const logoutResponse = z.object({ revokedAt: z.string() });

@@ -15,7 +15,7 @@ import {
   suppliers,
   users,
 } from '../src/db/schema/index.js';
-import { landedCost, suggestedPrice } from './money.js';
+import { landedCost, suggestedPrice } from '../src/lib/money.js';
 import {
   CUSTOMERS,
   DEMO_PASSWORD,
