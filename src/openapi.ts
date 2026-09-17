@@ -98,7 +98,7 @@ export function buildOpenApiDocument(): Record<string, unknown> {
           scheme: 'bearer',
           bearerFormat: 'JWT',
           description:
-            'Obtain a token from `POST /api/auth/login`. It carries the role claim and expires in 8 hours.',
+            'Obtain a token from `POST /api/auth/login`. It carries the role claim and expires in 8 hours. `POST /api/auth/logout` revokes it before then; every request checks that list.',
         },
       },
       schemas: {
@@ -106,6 +106,7 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         LoginRequest: jsonSchema(authService.loginInput, 'input'),
         LoginResponse: jsonSchema(authService.loginResponse, 'output'),
         User: jsonSchema(authService.publicUser, 'output'),
+        LogoutResponse: jsonSchema(authService.logoutResponse, 'output'),
         PartSearchResult: jsonSchema(posService.searchResult, 'output'),
         RecordSaleRequest: jsonSchema(posService.recordSaleInput, 'input'),
         Receipt: jsonSchema(posService.receipt, 'output'),
@@ -138,6 +139,29 @@ export function buildOpenApiDocument(): Record<string, unknown> {
             200: { description: 'Signed in', content: json(ref('LoginResponse')) },
             400: AUTH_ERRORS[400],
             401: errorResponse('Invalid email or password'),
+          },
+        },
+      },
+
+      '/api/auth/logout': {
+        post: {
+          tags: ['Auth'],
+          summary: 'Sign out this token',
+          description: [
+            'Revokes the token used to make this call. A JWT is valid until it expires',
+            'and presenting one asks the server nothing, so without this a sign-out is',
+            'only the client agreeing to forget the token — and anyone who copied it',
+            'keeps the session. On a shared till that is a real hole.',
+            '',
+            'Only this token is revoked. Signing out at the counter does not sign the',
+            'same person out on another device.',
+            '',
+            'Calling it twice is not an error, but the second call is refused with 401:',
+            'the token it would revoke has already been revoked.',
+          ].join('\n'),
+          responses: {
+            200: { description: 'Signed out', content: json(ref('LogoutResponse')) },
+            401: errorResponse('No token, or a token that is already signed out'),
           },
         },
       },

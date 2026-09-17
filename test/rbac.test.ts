@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import request from 'supertest';
 import type { Server } from 'node:http';
 import { createApp } from '../src/app.js';
+import { createTestDb } from './helpers/db.js';
 import { signToken, type Role } from '../src/lib/token.js';
 
 /** Section 2 of the demo scope promises that a restricted role is stopped by the
@@ -13,11 +14,17 @@ const ID = '11111111-1111-4111-8111-111111111111';
 const token = (role: Role) => signToken({ sub: ID, email: `${role}@demo`, role });
 
 let server: Server;
-before(() => {
+let close: () => Promise<void>;
+
+// A database is needed even though no test here reads one: requireAuth checks
+// the token against the revocation list on every request.
+before(async () => {
+  ({ close } = await createTestDb());
   server = createApp().listen(0);
 });
-after(() => {
+after(async () => {
   server.close();
+  await close();
 });
 
 /** Every mounted module router, and who the scope document says may reach it. */

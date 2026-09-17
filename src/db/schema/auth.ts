@@ -1,5 +1,5 @@
 import { appSchema } from './schema.js';
-import { boolean, text, uniqueIndex } from 'drizzle-orm/pg-core';
+import { boolean, index, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { primaryKey, timestamps } from './common.js';
 import { userRole } from './enums.js';
 
@@ -18,4 +18,26 @@ export const users = appSchema.table(
     ...timestamps,
   },
   (t) => [uniqueIndex('users_email_lower_idx').on(t.email)],
+);
+
+/** Signing out has to be recorded somewhere, because a JWT is valid until it
+ *  expires and nothing about presenting it asks this server for permission.
+ *  A token listed here is refused even though its signature is still good.
+ *
+ *  Keyed by the token's own `jti`, so signing out on the till revokes that
+ *  session and not the same person's other device.
+ *
+ *  Rows are only worth keeping until the token would have expired anyway —
+ *  after that the signature check refuses it without help — so `expiresAt`
+ *  exists to let them be swept up rather than to be read.
+ */
+export const revokedTokens = appSchema.table(
+  'revoked_tokens',
+  {
+    jti: uuid('jti').primaryKey(),
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    ...timestamps,
+  },
+  (t) => [index('revoked_tokens_expires_at_idx').on(t.expiresAt)],
 );

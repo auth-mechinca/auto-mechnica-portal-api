@@ -29,6 +29,13 @@
       "when": 1789645758291,
       "tag": "0003_pos_invoice_numbering",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1789650170091,
+      "tag": "0004_token_revocation",
+      "breakpoints": true
     }
   ]
 }

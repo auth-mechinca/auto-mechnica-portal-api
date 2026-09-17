@@ -14,6 +14,14 @@ authRouter.post(
   }),
 );
 
+authRouter.post(
+  '/logout',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    res.json(await service.logout(currentUser(req)));
+  }),
+);
+
 /** The frontend calls this on load to decide which navigation to render. The
  *  answer is advisory — every protected route re-checks the role server-side. */
 authRouter.get(

@@ -176,6 +176,23 @@ Business logic stays off the ORM's happy path where money is involved — anythi
 touching stock or money takes a `Tx`, not a `Db`, so it cannot run outside a
 transaction.
 
+## Signing out
+
+A JWT is valid until it expires, and presenting one asks the server nothing — so
+a client-side "logout" is only the client agreeing to forget the token. Anyone
+who copied it keeps the session. On a till shared by a shift, that is a real
+hole.
+
+`POST /api/auth/logout` therefore records the token's `jti` in `app.revoked_tokens`,
+and `requireAuth` checks that list on every request. Only that token is revoked:
+signing out at the counter does not sign the same person out on another device.
+
+The cost is one primary-key lookup per authenticated request. That is affordable
+because the API runs as a persistent process beside Postgres — the same decision
+that kept PgBouncer out of the picture. Revocations are swept when they expire,
+on sign-out, since that is the only moment the table grows and it keeps the
+process free of a background timer.
+
 ## RBAC
 
 Roles: `sales`, `purchasing`, `accountant`, `admin`.
@@ -241,7 +258,7 @@ disagreeing. Run it after `db:reset` for a clean history; that is the normal cas
 ## Tests
 
 ```bash
-npm test        # 102 tests
+npm test        # 109 tests
 npm run typecheck
 ```
 
@@ -263,6 +280,7 @@ constraint is genuinely missing.
 | `test/openapi.test.ts` | Every documented path exists, every $ref resolves, no unimplemented module is promised |
 | `test/receive-stock.test.ts` | The purchase chain, asserted against the exact figures on the wireframes |
 | `test/price-review.test.ts` | What an overridden price does when the same part is bought again at a new cost |
+| `test/logout.test.ts` | That a signed-out token actually stops working, everywhere, without affecting other sessions |
 | `test/migrations.test.ts` | Migration applies cleanly, 17 tables in `app`, nothing in `public`, no balance column anywhere |
 | `test/money.test.ts` | GHS returned as exact strings, FX scale, and landed cost = USD x rate |
 | `test/constraints.test.ts` | Duplicate SKU, dangling FK, duplicate balance per part/location |
