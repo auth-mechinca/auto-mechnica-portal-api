@@ -186,6 +186,34 @@ remember it. This is what makes the demo's RBAC claim true: a `sales` token
 requesting any `/api/backoffice/*` path is refused by the API with a 403, not
 merely hidden from the navigation.
 
+## API documentation
+
+```
+http://localhost:4000/docs          Swagger UI
+http://localhost:4000/openapi.json  the document itself
+```
+
+OpenAPI 3.1, **generated from the same zod schemas the API validates and returns**
+— `src/openapi.ts` reads the schemas the services already export, so a changed
+schema changes the document on the next boot. Response types are inferred from
+those schemas (`type Receipt = z.infer<typeof receipt>`), which means a handler
+returning the wrong shape fails to compile rather than quietly contradicting the
+docs.
+
+Zod 4 emits JSON Schema natively, so there is no conversion library in the
+dependency tree. `io: 'input'` and `io: 'output'` are passed separately: a field
+with a default is optional to a caller but always present in a response, and one
+schema for both would misdescribe one of them.
+
+Both routes are unauthenticated — the document describes the shape of the API,
+not its data. Use **Authorize** in the UI with a token from `POST /api/auth/login`
+to try the protected endpoints.
+
+Only implemented endpoints are described. The IMS, Financial and Backoffice
+routers are mounted and enforce their roles but have no handlers; documenting
+them would promise a 404. `test/openapi.test.ts` asserts both halves of that —
+every documented path exists, and no unimplemented module appears.
+
 ## Demo data
 
 `npm run db:seed` is idempotent — catalogue, users, prices and settings upsert on
@@ -213,7 +241,7 @@ disagreeing. Run it after `db:reset` for a clean history; that is the normal cas
 ## Tests
 
 ```bash
-npm test        # 81 tests
+npm test        # 87 tests
 npm run typecheck
 ```
 
@@ -232,6 +260,7 @@ constraint is genuinely missing.
 | `test/money-arithmetic.test.ts` | Exact multiply, add, subtract and compare — every price and balance goes through these |
 | `test/pos-sale.test.ts` | The sale transaction: pricing, stock, rollback, payment methods, invoice numbering, due dates |
 | `test/pos-search.test.ts` | Part search, and that no cost figure is ever returned to a Sales session |
+| `test/openapi.test.ts` | Every documented path exists, every $ref resolves, no unimplemented module is promised |
 | `test/migrations.test.ts` | Migration applies cleanly, 17 tables in `app`, nothing in `public`, no balance column anywhere |
 | `test/money.test.ts` | GHS returned as exact strings, FX scale, and landed cost = USD x rate |
 | `test/constraints.test.ts` | Duplicate SKU, dangling FK, duplicate balance per part/location |

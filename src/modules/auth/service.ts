@@ -4,7 +4,7 @@ import { getDb } from '../../db/client.js';
 import { users } from '../../db/schema/index.js';
 import { ApiError } from '../../lib/http.js';
 import { verifyPassword } from '../../lib/password.js';
-import { signToken } from '../../lib/token.js';
+import { ROLES, signToken } from '../../lib/token.js';
 
 /* Input contracts. Declared here because they describe what this service
  * accepts; the route mounts them as validation middleware. */
@@ -16,13 +16,17 @@ export const loginInput = z.object({
 export type LoginInput = z.infer<typeof loginInput>;
 
 /** What the API is willing to say about a user. Everything else on the row —
- *  the password hash above all — stays here. */
-type PublicUser = {
-  id: string;
-  email: string;
-  fullName: string;
-  role: (typeof users.$inferSelect)['role'];
-};
+ *  the password hash above all — stays here. Declared as a schema so the
+ *  OpenAPI document and the compiler agree on the shape. */
+export const publicUser = z.object({
+  id: z.string().uuid(),
+  email: z.string(),
+  fullName: z.string(),
+  role: z.enum(ROLES),
+});
+export type PublicUser = z.infer<typeof publicUser>;
+
+export const loginResponse = z.object({ token: z.string(), user: publicUser });
 
 const toPublicUser = (user: typeof users.$inferSelect): PublicUser => ({
   id: user.id,

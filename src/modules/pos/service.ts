@@ -73,42 +73,59 @@ export type RecordSaleInput = z.infer<typeof recordSaleInput>;
 
 /* ----------------------------------------------------------------- output */
 
-export type SearchResult = {
-  id: string;
-  sku: string;
-  name: string;
-  brand: string | null;
-  partNumber: string | null;
-  fitment: string[];
-  /** Null when Price Management has not set one. Such a part cannot be sold. */
-  sellPrice: string | null;
-  inStock: string;
-};
+/* Response shapes are declared as zod schemas and the TypeScript types are
+ * inferred from them, so the OpenAPI document and the compiler are reading the
+ * same declaration. A handler that returns the wrong shape fails to compile,
+ * which is what keeps the published contract honest. */
 
-export type Receipt = {
-  id: string;
-  reference: string;
-  invoiceDate: string;
-  dueDate: string;
-  customer: { id: string; name: string } | null;
-  soldBy: { id: string; fullName: string } | null;
-  lines: {
-    partId: string;
-    sku: string;
-    name: string;
-    quantity: string;
-    unitPrice: string;
-    lineTotal: string;
-  }[];
-  total: string;
-  payment: {
-    method: 'cash' | 'cheque' | 'momo';
-    status: 'pending' | 'cleared' | 'bounced';
-    amount: string;
-    cheque?: { chequeNumber: string; bankName: string | null };
-    momo?: { network: string; transactionId: string; phoneNumber: string };
-  } | null;
-};
+export const searchResult = z.object({
+  id: z.string().uuid(),
+  sku: z.string(),
+  name: z.string(),
+  brand: z.string().nullable(),
+  partNumber: z.string().nullable(),
+  fitment: z.array(z.string()),
+  /** Null when Price Management has not set one. Such a part cannot be sold. */
+  sellPrice: z.string().nullable(),
+  inStock: z.string(),
+});
+export type SearchResult = z.infer<typeof searchResult>;
+
+export const receipt = z.object({
+  id: z.string().uuid(),
+  reference: z.string(),
+  invoiceDate: z.string(),
+  dueDate: z.string(),
+  customer: z.object({ id: z.string().uuid(), name: z.string() }).nullable(),
+  soldBy: z.object({ id: z.string().uuid(), fullName: z.string() }).nullable(),
+  lines: z.array(
+    z.object({
+      partId: z.string().uuid(),
+      sku: z.string(),
+      name: z.string(),
+      quantity: z.string(),
+      unitPrice: z.string(),
+      lineTotal: z.string(),
+    }),
+  ),
+  total: z.string(),
+  payment: z
+    .object({
+      method: z.enum(['cash', 'cheque', 'momo']),
+      status: z.enum(['pending', 'cleared', 'bounced']),
+      amount: z.string(),
+      cheque: z.object({ chequeNumber: z.string(), bankName: z.string().nullable() }).optional(),
+      momo: z
+        .object({
+          network: z.enum(['mtn', 'telecel', 'airteltigo']),
+          transactionId: z.string(),
+          phoneNumber: z.string(),
+        })
+        .optional(),
+    })
+    .nullable(),
+});
+export type Receipt = z.infer<typeof receipt>;
 
 /* ---------------------------------------------------------------- helpers */
 
