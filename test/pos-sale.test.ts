@@ -6,6 +6,7 @@ import { createTestDb } from './helpers/db.js';
 import { shopFixture, stockOf } from './helpers/fixtures.js';
 import type { Db } from '../src/db/client.js';
 import { recordSale } from '../src/modules/pos/service.js';
+import { updateSettings } from '../src/modules/settings/service.js';
 import { paymentAllocations, payments, salesInvoices, stockMovements } from '../src/db/schema/index.js';
 
 let db: Db;
@@ -17,6 +18,9 @@ before(async () => {
   shop = await shopFixture(db);
 });
 after(() => close());
+
+const termsOf = (receipt: { invoiceDate: string; dueDate: string }): number =>
+  (Date.parse(receipt.dueDate) - Date.parse(receipt.invoiceDate)) / 86_400_000;
 
 describe('recording a sale', () => {
   it('prices the sale from the database, not from the request', async () => {
@@ -281,8 +285,34 @@ describe('invoice numbering and terms', () => {
       shop.sellerId,
     );
 
-    const days =
-      (Date.parse(receipt.dueDate) - Date.parse(receipt.invoiceDate)) / 86_400_000;
-    assert.equal(days, 30);
+    assert.equal(termsOf(receipt), 30);
+  });
+
+  /** The due date is stamped on the invoice, not derived on read. Changing the
+   *  terms therefore applies to what is raised next and reaches nothing already
+   *  issued — otherwise moving 30 days to 45 would re-age the whole ledger and a
+   *  customer ten days late would quietly become five days early. */
+  it('applies new terms to the next invoice and leaves issued ones where they are', async () => {
+    const before = await recordSale(
+      { customerId: shop.customerId, lines: [{ partId: shop.airFilter.id, quantity: 1 }], payment: { method: 'cash' } },
+      shop.sellerId,
+    );
+
+    await updateSettings({ defaultPaymentTermsDays: 45 });
+
+    const after = await recordSale(
+      { customerId: shop.customerId, lines: [{ partId: shop.airFilter.id, quantity: 1 }], payment: { method: 'cash' } },
+      shop.sellerId,
+    );
+
+    assert.equal(termsOf(after), 45, 'the next invoice takes the new terms');
+
+    const [reread] = await db
+      .select({ dueDate: salesInvoices.dueDate })
+      .from(salesInvoices)
+      .where(eq(salesInvoices.id, before.id));
+    assert.equal(reread!.dueDate, before.dueDate, 'the issued invoice keeps the terms of its day');
+
+    await updateSettings({ defaultPaymentTermsDays: 30 });
   });
 });

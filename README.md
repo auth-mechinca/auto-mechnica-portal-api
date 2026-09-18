@@ -264,7 +264,7 @@ disagreeing. Run it after `db:reset` for a clean history; that is the normal cas
 ## Tests
 
 ```bash
-npm test        # 213 tests
+npm test        # 231 tests
 npm run typecheck
 ```
 
