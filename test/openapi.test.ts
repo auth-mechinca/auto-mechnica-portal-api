@@ -81,6 +81,22 @@ describe('the OpenAPI document', () => {
     assert.ok(paths.some((p) => p.startsWith('/api/backoffice/suppliers')));
 
     assert.ok(paths.some((p) => p.startsWith('/api/ims/')));
+    assert.ok(paths.some((p) => p.startsWith('/api/categories')));
+    assert.ok(paths.some((p) => p.startsWith('/api/brands')));
+
+    // Every path template variable must be declared as a parameter. A path that
+    // interpolates something undeclared is invalid OpenAPI, and describes an
+    // endpoint that does not exist — which is how `/api/ims/{taxonomy}` got in.
+    for (const [path, operations] of Object.entries(doc.paths)) {
+      for (const variable of [...path.matchAll(/\{(\w+)\}/g)].map((m) => m[1])) {
+        const declared = Object.values(operations).some((op) =>
+          ((op as { parameters?: { name: string; in: string }[] }).parameters ?? []).some(
+            (param) => param.name === variable && param.in === 'path',
+          ),
+        );
+        assert.ok(declared, `${path} interpolates {${variable}} but never declares it`);
+      }
+    }
 
     // All five modules are implemented now. If a future module is mounted
     // without handlers, add it back here — documenting it would promise a 404.

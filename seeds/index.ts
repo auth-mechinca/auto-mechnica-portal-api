@@ -2,6 +2,8 @@ import { and, eq, sql } from 'drizzle-orm';
 import { closeDb, getDb, type Db } from '../src/db/client.js';
 import { hashPassword } from '../src/lib/password.js';
 import {
+  brands,
+  categories,
   customers,
   inventoryBalances,
   locations,
@@ -107,6 +109,27 @@ async function seedCustomers(db: Db) {
   return CUSTOMERS.length;
 }
 
+/** Categories and brands are rows now, so the seed creates them before the parts
+ *  that point at them — and reuses one when the name already exists, matching
+ *  the case-insensitive rule the unique index enforces. */
+async function findOrCreateNamed(
+  db: Db,
+  table: typeof categories | typeof brands,
+  name: string | null,
+): Promise<string | null> {
+  if (!name) return null;
+
+  const [existing] = await db
+    .select({ id: table.id })
+    .from(table)
+    .where(sql`lower(${table.name}) = lower(${name})`)
+    .limit(1);
+  if (existing) return existing.id;
+
+  const [created] = await db.insert(table).values({ name }).returning();
+  return created!.id;
+}
+
 async function seedPartsAndPrices(db: Db, locationId: string) {
   const margin = SETTINGS.default_margin_pct;
 
@@ -118,14 +141,14 @@ async function seedPartsAndPrices(db: Db, locationId: string) {
         name: part.name,
         partNumber: part.partNumber,
         oemNumber: part.oemNumber,
-        brand: part.brand,
-        category: part.category,
+        brandId: await findOrCreateNamed(db, brands, part.brand),
+        categoryId: await findOrCreateNamed(db, categories, part.category),
         fitment: [...part.fitment],
         reorderPoint: part.reorderPoint,
       })
       .onConflictDoUpdate({
         target: parts.sku,
-        set: { name: part.name, brand: part.brand, reorderPoint: part.reorderPoint },
+        set: { name: part.name, reorderPoint: part.reorderPoint },
       })
       .returning();
 

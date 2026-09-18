@@ -39,7 +39,7 @@ before(async () => {
 
   const [part] = await db
     .insert(parts)
-    .values({ sku: 'BP-2042', name: 'Brake pad set, front', brand: 'Bosch' })
+    .values({ sku: 'BP-2042', name: 'Brake pad set, front' })
     .returning();
   brakePadId = part!.id;
 

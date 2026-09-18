@@ -10,6 +10,8 @@ import { posRouter } from './modules/pos/routes.js';
 import { imsRouter } from './modules/ims/routes.js';
 import { financialRouter } from './modules/financial/routes.js';
 import { backofficeRouter } from './modules/backoffice/routes.js';
+import { categoriesRouter } from './modules/categories/routes.js';
+import { brandsRouter } from './modules/brands/routes.js';
 
 export function createApp() {
   const app = express();
@@ -47,6 +49,8 @@ export function createApp() {
   app.use('/api/ims', imsRouter);
   app.use('/api/financial', financialRouter);
   app.use('/api/backoffice', backofficeRouter);
+  app.use('/api/categories', categoriesRouter);
+  app.use('/api/brands', brandsRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

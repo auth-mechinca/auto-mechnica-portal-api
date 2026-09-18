@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { getDb, type Tx } from '../../db/client.js';
 import { defaultLocationId, settingValue } from '../../db/defaults.js';
 import {
+  brands,
   inventoryBalances,
   parts,
   priceHistory,
@@ -663,7 +664,7 @@ export async function listPrices(query: ListPricesQuery): Promise<PriceRow[]> {
     select p.id                   as "partId",
            p.sku,
            p.name,
-           p.brand,
+           br.name                as brand,
            pr.landed_cost         as "landedCost",
            pr.suggested_price     as "suggestedPrice",
            pr.final_price         as "finalPrice",
@@ -676,9 +677,10 @@ export async function listPrices(query: ListPricesQuery): Promise<PriceRow[]> {
              limit 1)             as "lastManualLandedCost"
       from ${prices} pr
       join ${parts} p on p.id = pr.part_id
+      left join ${brands} br on br.id = p.brand_id
      where pr.final_price is not null
        and (${pattern}::text is null
-            or p.name ilike ${pattern} or p.sku ilike ${pattern} or p.brand ilike ${pattern})
+            or p.name ilike ${pattern} or p.sku ilike ${pattern} or br.name ilike ${pattern})
      order by p.name
   `);
 

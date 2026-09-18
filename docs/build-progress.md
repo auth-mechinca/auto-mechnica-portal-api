@@ -17,10 +17,11 @@
 | Backoffice — suppliers, PO create | **Done** — supplier CRUD with deactivation, drafting a PO, sending, cancelling |
 | IMS | **Done** — catalogue, part detail with its stock ledger, adjustments, low stock |
 | Financial Core | **Done** — customer accounts with ageing, account detail, recording payments, the cheque queue |
+| Settings | **Partial** — the margin can be read and changed, but the screen's other fields and its admin-only rule are missing |
 | Next.js frontend | **Not started** — repo is an empty initial commit |
 | API documentation | **Done** — OpenAPI 3.1 at `/openapi.json`, Swagger UI at `/docs` |
 
-**191 tests pass.** The spine of the demo now works end to end on the server: receive a purchase order at a new FX rate, watch the landed cost and suggested price move, then sell the part at the till and watch stock and the customer balance follow. What is missing is a face — nothing is wired to a screen yet.
+**213 tests pass.** The spine of the demo now works end to end on the server: receive a purchase order at a new FX rate, watch the landed cost and suggested price move, then sell the part at the till and watch stock and the customer balance follow. What is missing is a face — nothing is wired to a screen yet.
 
 ---
 
@@ -99,7 +100,7 @@ Every module is two files, and the split is strict. `routes.ts` holds the router
 | `GET /api/backoffice/prices` | purchasing | Landed, suggested, final, with a derived status and filters |
 | `GET /api/backoffice/prices/:partId` | purchasing | Cost basis — which PO, which USD cost, which rate — and full history |
 | `PATCH /api/backoffice/prices/:partId` | purchasing | Set the final price; appears in POS immediately |
-| `GET`/`PATCH /api/backoffice/settings` | purchasing | The global margin |
+| `GET`/`PATCH /api/backoffice/settings` | purchasing | The global margin. **Incomplete — see Settings below** |
 | `GET /api/financial/customers` | accountant | Accounts, most overdue first, with ageing and summary tiles |
 | `GET /api/financial/customers/:id` | accountant | Every invoice and payment on one account |
 | `POST /api/financial/payments` | accountant | Money arriving after the counter |
@@ -118,6 +119,9 @@ Every module is two files, and the split is strict. `routes.ts` holds the router
 | `POST /api/ims/parts/:id/adjust` | purchasing | Damage, loss, count correction — reason required |
 | `GET /api/ims/adjustments` | purchasing | Recent adjustments across parts |
 | `GET /api/ims/low-stock` | purchasing | With usual supplier and what is already on order |
+| `GET`/`POST /api/categories` | purchasing | Its own module — dropdown list, and creating one on the fly |
+| `PATCH /api/categories/:id` | purchasing | Rename, or deactivate |
+| `GET`/`POST`/`PATCH /api/brands` | purchasing | Its own module, the same shape |
 
 Admin reaches everything.
 
@@ -184,6 +188,121 @@ below zero is refused.
 Low stock carries what a purchasing officer needs in order to act: how short,
 who supplied it most recently, and **anything already expected on an open
 order** — the shortfall may be covered already, and reordering would double up.
+
+### Settings — partial
+
+There is a settings endpoint, at `GET`/`PATCH /api/backoffice/settings`. It reads
+`default_margin_pct` and `default_payment_terms_days` and lets the margin be
+changed, which is what price management needed. It is not the Settings screen.
+
+Three gaps, in the order they matter:
+
+**1. The screen says "Admin only". The endpoint does not.** It is mounted on the
+backoffice router, so it inherits `purchasing, admin` — a purchasing officer can
+change the margin that prices the whole catalogue. That is a genuine RBAC
+mismatch, not a missing field, and it is the reason this section exists.
+
+**2. Two fields on the screen are not returned.** Selling currency (GHS) and
+location (Main Shop) are both read-only context, telling the owner what the
+system has decided rather than offering a choice. The endpoint returns neither,
+so the screen cannot be drawn from it.
+
+**3. It returns a field the screen does not show.** `defaultPaymentTermsDays` is
+read by invoicing to stamp a due date. It is not on the Settings wireframe, and
+returning it here was convenience rather than design.
+
+Worth deciding at the same time: whether settings belong under `/api/backoffice`
+at all. The wireframe's navigation puts Settings at the top level beside Users
+and Roles, under Admin — which is the same argument that moved categories and
+brands out of IMS into modules of their own.
+
+One more thing to fix when this is picked up: the Settings artboard still reads
+"Suggested price = landed cost × (1 + margin)", which is the markup formula the
+API no longer uses. It belongs with the stale-wireframe item in Section 5.
+
+#### What it should be
+
+**Its own module at `/api/settings`, admin only.** Not under `/api/backoffice`:
+settings are read by three modules — pricing takes the margin, invoicing takes
+the payment terms, POS prices in the currency — and a thing three modules read is
+not owned by one of them. The navigation puts Settings beside Users and Roles,
+under Admin, and the role gate should come from that rather than from whichever
+router it was convenient to attach to.
+
+```
+GET   /api/settings     requireRole('admin')
+PATCH /api/settings     requireRole('admin')
+```
+
+**`GET` returns what the screen draws**, which is one editable field and two
+read-only ones:
+
+| Field | | Source |
+|---|---|---|
+| `defaultMarginPct` | editable | `settings` table |
+| `sellingCurrency` | read-only, always `GHS` | constant, not a row — nothing in this build can change it |
+| `location` | read-only, `{ id, name }` | the single seeded location |
+
+The two read-only fields are there to tell the owner what the system has decided,
+not to offer a choice. They are worth returning rather than hardcoding in the UI,
+because the moment multi-location arrives the screen should start showing
+something different without a frontend change.
+
+**`PATCH` accepts `defaultMarginPct` only.** Under 100, since a margin is a share
+of the selling price and at 100% the price would have to be infinite. Changing it
+affects what is suggested from then on and never rewrites a price somebody has
+already confirmed — the behaviour the artboard describes and the pricing code
+already implements.
+
+**Still to decide: `defaultPaymentTermsDays`.** The current endpoint returns it;
+the Settings screen does not show it. It is a real shop-wide setting — invoicing
+stamps a due date from it — so the options are to surface it on the screen as a
+fourth field, or to keep it out of this API and leave it seeded. Either is
+defensible; it should not stay in the response while being absent from the screen,
+which is how it reads today.
+
+**Migrating off the current endpoint.** `/api/backoffice/settings` should be
+removed rather than kept as an alias once this exists. Nothing in the frontend
+calls it yet, and leaving a second path to the same data — one of them with the
+wrong role gate — reintroduces the hole this is meant to close.
+
+### Categories and brands
+
+**Each is its own module**, mounted at `/api/categories` and `/api/brands` beside
+the other five rather than under IMS. They were briefly inside IMS and documented
+together as `/api/ims/{taxonomy}`, which described an endpoint that did not exist:
+the routes were always two concrete paths, and the placeholder made the spec
+invalid as well as misleading. Separate modules, separate paths, separate
+documentation.
+
+They read almost identically and could share an implementation. They do not, on
+purpose — a brand is who made the part and a category is what kind of part it is,
+and one will grow a field the other does not.
+
+Both were free text on a part, and drifted the first day they were used: one part
+went in as "Electrical" and another as "Electrical and Charging", and the filter
+list simply reported both. Nothing could tell a new category from a typo of an
+existing one, and the exact-match filter then hid a part from the very category
+its author thought they had chosen.
+
+They are rows now, referenced by id, with a unique index on the lowercased name —
+so "Electrical", "electrical" and " Electrical " are one category rather than
+three that look identical on screen. Names are trimmed on write rather than
+trusting the caller to have done it.
+
+Neither is ever deleted. A part points at one, and losing the row would leave
+that part uncategorised, so they are deactivated like suppliers. Renaming reaches
+every part using it, because the part holds a reference rather than the text.
+
+The part list no longer returns the category and brand lists; the dropdowns come
+from their own endpoints, which also report how many parts use each. POS search
+still returns a brand *name* and no id — the till prints "BP-2042 · Bosch" and
+has no business managing brands.
+
+Migrations 0008–0010 do this in three steps: add the tables and the reference
+columns, backfill the existing text into rows and point the parts at them, then
+drop the text columns. The backfill is a custom migration rather than a generated
+one, because drizzle generates structure and moving the values is a separate job.
 
 ### Suppliers and drafting a purchase order
 

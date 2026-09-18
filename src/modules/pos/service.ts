@@ -2,6 +2,7 @@ import { and, asc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb, type Tx } from '../../db/client.js';
 import {
+  brands,
   cheques,
   customers,
   inventoryBalances,
@@ -150,7 +151,9 @@ export async function searchParts({ q }: SearchInput): Promise<SearchResult[]> {
     select p.id,
            p.sku,
            p.name,
-           p.brand,
+           -- The name, not the row: the till prints "BP-2042 · Bosch" and has no
+           -- use for a brand id. Managing brands is Inventory's job.
+           br.name as brand,
            p.part_number       as "partNumber",
            p.fitment,
            pr.final_price      as "sellPrice",
@@ -158,6 +161,7 @@ export async function searchParts({ q }: SearchInput): Promise<SearchResult[]> {
     from ${parts} p
     left join ${prices} pr on pr.part_id = p.id
     left join ${inventoryBalances} b on b.part_id = p.id
+    left join ${brands} br on br.id = p.brand_id
     where p.is_active
       and (
         p.name ilike ${pattern}
