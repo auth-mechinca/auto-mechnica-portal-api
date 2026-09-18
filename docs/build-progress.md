@@ -13,15 +13,15 @@
 | Auth, RBAC, sign-out | **Done** — login, JWT with revocable sessions, server-side role checks |
 | POS | **Done** — part search, recording a sale, reading the receipt back |
 | Backoffice — purchase orders | **Done** — list, detail, receive stock with the full cost-to-price chain |
-| Backoffice — price management | **Done** — list with derived status, cost basis and history, set a price, change the shop margin |
+| Backoffice — price management | **Done** — list with derived status, cost basis and history, set a price |
 | Backoffice — suppliers, PO create | **Done** — supplier CRUD with deactivation, drafting a PO, sending, cancelling |
 | IMS | **Done** — catalogue, part detail with its stock ledger, adjustments, low stock |
 | Financial Core | **Done** — customer accounts with ageing, account detail, recording payments, the cheque queue |
-| Settings | **Partial** — the margin can be read and changed, but the screen's other fields and its admin-only rule are missing |
+| Settings | **Done** — its own admin-only module: the margin, plus the currency and location the screen reports |
 | Next.js frontend | **Not started** — repo is an empty initial commit |
 | API documentation | **Done** — OpenAPI 3.1 at `/openapi.json`, Swagger UI at `/docs` |
 
-**213 tests pass.** The spine of the demo now works end to end on the server: receive a purchase order at a new FX rate, watch the landed cost and suggested price move, then sell the part at the till and watch stock and the customer balance follow. What is missing is a face — nothing is wired to a screen yet.
+**222 tests pass.** The spine of the demo now works end to end on the server: receive a purchase order at a new FX rate, watch the landed cost and suggested price move, then sell the part at the till and watch stock and the customer balance follow. What is missing is a face — nothing is wired to a screen yet.
 
 ---
 
@@ -37,7 +37,7 @@ Fidelity is deliberately low: greyscale, real field names, real data, no brandin
 |---|---|
 | **Shell & nav by role** | Not a screen you visit — the four role menus side by side, plus the blocked-route state. Makes the RBAC demo concrete rather than asserted. |
 | **Add / edit user** | Section 9 lists "User/Role Management" but no form. The list alone can't create anybody. |
-| **Settings** | The scope calls the global margin configurable but names no screen to change it on. Three fields, two of them read-only. |
+| **Settings** | The scope calls the global margin configurable but names no screen to change it on. Three fields, two of them read-only. Built — see Section 3. |
 | **Customer detail — invoices tab** | Not a new screen; the second tab state of "Customer Account Detail". Drawn separately because a wireframe can only show one tab at a time. |
 
 One in-screen addition beyond scope: **Low Stock → "Start purchase order"**, which opens PO Create with the ticked parts already on it. The scope says "simple list"; without this the screen dead-ends. Flagged on the screen itself and easy to remove.
@@ -100,7 +100,6 @@ Every module is two files, and the split is strict. `routes.ts` holds the router
 | `GET /api/backoffice/prices` | purchasing | Landed, suggested, final, with a derived status and filters |
 | `GET /api/backoffice/prices/:partId` | purchasing | Cost basis — which PO, which USD cost, which rate — and full history |
 | `PATCH /api/backoffice/prices/:partId` | purchasing | Set the final price; appears in POS immediately |
-| `GET`/`PATCH /api/backoffice/settings` | purchasing | The global margin. **Incomplete — see Settings below** |
 | `GET /api/financial/customers` | accountant | Accounts, most overdue first, with ageing and summary tiles |
 | `GET /api/financial/customers/:id` | accountant | Every invoice and payment on one account |
 | `POST /api/financial/payments` | accountant | Money arriving after the counter |
@@ -122,6 +121,7 @@ Every module is two files, and the split is strict. `routes.ts` holds the router
 | `GET`/`POST /api/categories` | purchasing | Its own module — dropdown list, and creating one on the fly |
 | `PATCH /api/categories/:id` | purchasing | Rename, or deactivate |
 | `GET`/`POST`/`PATCH /api/brands` | purchasing | Its own module, the same shape |
+| `GET`/`PATCH /api/settings` | **admin** | Its own module. The global margin, plus the currency and location the screen reports |
 
 Admin reaches everything.
 
@@ -189,82 +189,56 @@ Low stock carries what a purchasing officer needs in order to act: how short,
 who supplied it most recently, and **anything already expected on an open
 order** — the shortfall may be covered already, and reordering would double up.
 
-### Settings — partial
+### Settings
 
-There is a settings endpoint, at `GET`/`PATCH /api/backoffice/settings`. It reads
-`default_margin_pct` and `default_payment_terms_days` and lets the margin be
-changed, which is what price management needed. It is not the Settings screen.
+**Its own module at `/api/settings`, admin only.** Not under `/api/backoffice`,
+where it began: settings are read by three modules — pricing takes the margin,
+invoicing takes the payment terms, POS prices in the currency — and a thing three
+modules read is not owned by one of them. The wireframe's navigation puts
+Settings beside Users and Roles under Admin, and the role gate now comes from
+that rather than from whichever router it was convenient to attach to.
 
-Three gaps, in the order they matter:
+**The move closed a real hole.** Mounted on the backoffice router it inherited
+`purchasing, admin`, so a purchasing officer could change the margin that prices
+the whole catalogue. `/api/settings` is `requireRole('admin')`, and a test asserts
+that sales, purchasing and accountant are each turned away from both verbs.
 
-**1. The screen says "Admin only". The endpoint does not.** It is mounted on the
-backoffice router, so it inherits `purchasing, admin` — a purchasing officer can
-change the margin that prices the whole catalogue. That is a genuine RBAC
-mismatch, not a missing field, and it is the reason this section exists.
+**`/api/backoffice/settings` was removed rather than aliased.** Nothing in the
+frontend called it, and leaving a second path to the same data — one of them with
+the wrong gate — would have reintroduced exactly what this closed. A test asserts
+it now 404s.
 
-**2. Two fields on the screen are not returned.** Selling currency (GHS) and
-location (Main Shop) are both read-only context, telling the owner what the
-system has decided rather than offering a choice. The endpoint returns neither,
-so the screen cannot be drawn from it.
-
-**3. It returns a field the screen does not show.** `defaultPaymentTermsDays` is
-read by invoicing to stamp a due date. It is not on the Settings wireframe, and
-returning it here was convenience rather than design.
-
-Worth deciding at the same time: whether settings belong under `/api/backoffice`
-at all. The wireframe's navigation puts Settings at the top level beside Users
-and Roles, under Admin — which is the same argument that moved categories and
-brands out of IMS into modules of their own.
-
-One more thing to fix when this is picked up: the Settings artboard still reads
-"Suggested price = landed cost × (1 + margin)", which is the markup formula the
-API no longer uses. It belongs with the stale-wireframe item in Section 5.
-
-#### What it should be
-
-**Its own module at `/api/settings`, admin only.** Not under `/api/backoffice`:
-settings are read by three modules — pricing takes the margin, invoicing takes
-the payment terms, POS prices in the currency — and a thing three modules read is
-not owned by one of them. The navigation puts Settings beside Users and Roles,
-under Admin, and the role gate should come from that rather than from whichever
-router it was convenient to attach to.
-
-```
-GET   /api/settings     requireRole('admin')
-PATCH /api/settings     requireRole('admin')
-```
-
-**`GET` returns what the screen draws**, which is one editable field and two
-read-only ones:
+**`GET` returns what the screen draws:** one editable field and two read-only ones.
 
 | Field | | Source |
 |---|---|---|
 | `defaultMarginPct` | editable | `settings` table |
-| `sellingCurrency` | read-only, always `GHS` | constant, not a row — nothing in this build can change it |
-| `location` | read-only, `{ id, name }` | the single seeded location |
+| `sellingCurrency` | read-only, always `GHS` | a constant, not a row — nothing in this build can change it |
+| `location` | read-only, `{ id, name }` | the single active location |
 
-The two read-only fields are there to tell the owner what the system has decided,
-not to offer a choice. They are worth returning rather than hardcoding in the UI,
-because the moment multi-location arrives the screen should start showing
-something different without a frontend change.
+The two read-only fields report what the system has decided rather than offering
+a choice. They are returned rather than hardcoded in the UI so that the day a
+second location arrives the screen starts saying something different without a
+frontend release. `location` resolves through the same `defaultLocation` helper
+the stock code uses, so the shop the screen names is the shop being sold out of.
 
-**`PATCH` accepts `defaultMarginPct` only.** Under 100, since a margin is a share
-of the selling price and at 100% the price would have to be infinite. Changing it
+**`PATCH` accepts `defaultMarginPct` only**, under 100 — a margin is a share of
+the selling price, and at 100% the price would have to be infinite. Changing it
 affects what is suggested from then on and never rewrites a price somebody has
-already confirmed — the behaviour the artboard describes and the pricing code
-already implements.
+already confirmed. Anything else in the body is ignored rather than honoured: a
+`PATCH` carrying `sellingCurrency: "USD"` succeeds and still answers `GHS`.
 
-**Still to decide: `defaultPaymentTermsDays`.** The current endpoint returns it;
-the Settings screen does not show it. It is a real shop-wide setting — invoicing
-stamps a due date from it — so the options are to surface it on the screen as a
-fourth field, or to keep it out of this API and leave it seeded. Either is
-defensible; it should not stay in the response while being absent from the screen,
-which is how it reads today.
+**Still open: `defaultPaymentTermsDays`.** It is a real shop-wide setting —
+invoicing stamps a due date from it — but it is not on the Settings wireframe, so
+it is not in this response. It stays seeded and is read straight from the table
+by POS, which is unchanged behaviour. The call still to make is whether it
+becomes a fourth field on the screen; adding it later is additive, so nothing
+here forecloses it.
 
-**Migrating off the current endpoint.** `/api/backoffice/settings` should be
-removed rather than kept as an alias once this exists. Nothing in the frontend
-calls it yet, and leaving a second path to the same data — one of them with the
-wrong role gate — reintroduces the hole this is meant to close.
+One thing to fix when the wireframes are next touched: the Settings artboard
+still reads "Suggested price = landed cost × (1 + margin)", which is the markup
+formula the API no longer uses. It belongs with the stale-wireframe item in
+Section 5.
 
 ### Categories and brands
 

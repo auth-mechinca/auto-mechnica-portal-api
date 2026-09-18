@@ -13,8 +13,8 @@ import {
   listPrices,
   receiveStock,
   setFinalPrice,
-  updateSettings,
 } from '../src/modules/backoffice/service.js';
+import { updateSettings } from '../src/modules/settings/service.js';
 
 let db: Db;
 let close: () => Promise<void>;
@@ -195,15 +195,6 @@ describe('over HTTP', () => {
       .send({ finalPrice: '240.0000' });
 
     assert.equal(res.status, 400);
-  });
-
-  it('refuses a margin of 100% or more', async () => {
-    const res = await request(server)
-      .patch('/api/backoffice/settings')
-      .set(auth())
-      .send({ defaultMarginPct: '100' });
-
-    assert.equal(res.status, 400, 'a margin is a share of the price; 100% has no price');
   });
 
   it('keeps Sales out', async () => {

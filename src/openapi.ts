@@ -6,6 +6,7 @@ import * as imsService from './modules/ims/service.js';
 import * as categoriesService from './modules/categories/service.js';
 import * as brandsService from './modules/brands/service.js';
 import * as posService from './modules/pos/service.js';
+import * as settingsService from './modules/settings/service.js';
 
 /** The OpenAPI document, generated from the very zod schemas the API validates
  *  and returns. Nothing here is hand-copied from a handler, so the published
@@ -123,6 +124,11 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         description:
           'Section 6.2. Requires the **purchasing** or **admin** role. This is where a USD purchase cost becomes a Cedi price at the till.',
       },
+      {
+        name: 'Settings',
+        description:
+          'Shop-wide settings, **admin** only. The margin here prices the whole catalogue, which is why purchasing cannot reach it.',
+      },
       { name: 'Service', description: 'Operational endpoints.' },
     ],
     components: {
@@ -151,7 +157,7 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         PriceRow: jsonSchema(backofficeService.priceRow, 'output'),
         PriceDetail: jsonSchema(backofficeService.priceDetail, 'output'),
         SetFinalPriceRequest: jsonSchema(backofficeService.setFinalPriceInput, 'input'),
-        Settings: jsonSchema(backofficeService.settingsResponse, 'output'),
+        Settings: jsonSchema(settingsService.settingsResponse, 'output'),
         CustomerAccounts: jsonSchema(financialService.customerAccountsResponse, 'output'),
         CustomerAccount: jsonSchema(financialService.customerAccountDetail, 'output'),
         RecordPaymentRequest: jsonSchema(financialService.recordPaymentInput, 'input'),
@@ -178,7 +184,7 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         CreateBrandRequest: jsonSchema(brandsService.createBrandInput, 'input'),
         UpdateBrandRequest: jsonSchema(brandsService.updateBrandInput, 'input'),
         UpdatePurchaseOrderRequest: jsonSchema(backofficeService.updatePurchaseOrderInput, 'input'),
-        UpdateSettingsRequest: jsonSchema(backofficeService.updateSettingsInput, 'input'),
+        UpdateSettingsRequest: jsonSchema(settingsService.updateSettingsInput, 'input'),
       },
     },
     security: [{ bearerAuth: [] }],
@@ -641,17 +647,25 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         },
       },
 
-      '/api/backoffice/settings': {
+      '/api/settings': {
         get: {
-          tags: ['Prices'],
+          tags: ['Settings'],
           summary: 'Shop-wide settings',
+          description: [
+            'Everything the Settings screen draws: one field that can be changed and two',
+            'that report what the system has decided.',
+            '',
+            '`sellingCurrency` is always `GHS` and `location` is the single shop. Both are',
+            'returned rather than hardcoded in the UI, so the day a second location or a',
+            'second currency arrives the screen changes without a frontend release.',
+          ].join('\n'),
           responses: {
             200: { description: 'Current settings', content: json(ref('Settings')) },
             ...AUTH_ERRORS,
           },
         },
         patch: {
-          tags: ['Prices'],
+          tags: ['Settings'],
           summary: 'Change the global margin',
           description: [
             '`defaultMarginPct` is a margin **on the selling price**, not a markup on',

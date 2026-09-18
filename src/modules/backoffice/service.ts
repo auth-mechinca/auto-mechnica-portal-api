@@ -11,7 +11,6 @@ import {
   purchaseOrderLines,
   purchaseOrders,
   stockMovements,
-  settings,
   suppliers,
   users,
 } from '../../db/schema/index.js';
@@ -798,46 +797,6 @@ export async function setFinalPrice(
   });
 
   return getPrice(partId);
-}
-
-/* ---------------------------------------------------------------- settings */
-
-export const settingsResponse = z.object({
-  defaultMarginPct: z.string(),
-  defaultPaymentTermsDays: z.string(),
-});
-export type SettingsResponse = z.infer<typeof settingsResponse>;
-
-export const updateSettingsInput = z.object({
-  /** Below 100 because a margin is a share of the selling price: at 100% the
-   *  price would have to be infinite, and beyond it, negative. */
-  defaultMarginPct: z
-    .string()
-    .regex(/^\d+(\.\d{1,2})?$/)
-    .refine((value) => Number(value) < 100, 'A margin must be under 100%'),
-});
-export type UpdateSettingsInput = z.infer<typeof updateSettingsInput>;
-
-export async function getSettings(): Promise<SettingsResponse> {
-  return getDb().transaction(async (tx) => ({
-    defaultMarginPct: await settingValue(tx, 'default_margin_pct', '35'),
-    defaultPaymentTermsDays: await settingValue(tx, 'default_payment_terms_days', '30'),
-  }));
-}
-
-/** Changes what future receipts and price screens suggest. Prices already saved
- *  are left alone: they were decisions taken at the margin of the day, and
- *  rewriting them would silently reprice the whole catalogue. */
-export async function updateSettings(input: UpdateSettingsInput): Promise<SettingsResponse> {
-  await getDb()
-    .insert(settings)
-    .values({ key: 'default_margin_pct', value: input.defaultMarginPct })
-    .onConflictDoUpdate({
-      target: settings.key,
-      set: { value: input.defaultMarginPct, updatedAt: new Date() },
-    });
-
-  return getSettings();
 }
 
 /* --------------------------------------------------------------- suppliers */

@@ -115,21 +115,6 @@ backofficeRouter.patch(
   }),
 );
 
-backofficeRouter.get(
-  '/settings',
-  asyncHandler(async (_req, res) => {
-    res.json(await service.getSettings());
-  }),
-);
-
-backofficeRouter.patch(
-  '/settings',
-  validateBody(service.updateSettingsInput),
-  asyncHandler(async (req, res) => {
-    res.json(await service.updateSettings(req.body));
-  }),
-);
-
 /* Suppliers (6.1). Never deleted — one you stop using becomes inactive, so its
  * purchase-order history stays intact and past costs remain explicable. */
 
