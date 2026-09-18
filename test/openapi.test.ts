@@ -80,14 +80,10 @@ describe('the OpenAPI document', () => {
     assert.ok(paths.some((p) => p.startsWith('/api/financial/')));
     assert.ok(paths.some((p) => p.startsWith('/api/backoffice/suppliers')));
 
-    // These routers are mounted and enforce roles but have no handlers. Once one
-    // gains an endpoint, this test should be updated along with the document.
-    for (const unimplemented of ['/api/ims/']) {
-      assert.ok(
-        !paths.some((p) => p.startsWith(unimplemented)),
-        `${unimplemented} has no handlers yet — documenting it would promise a 404`,
-      );
-    }
+    assert.ok(paths.some((p) => p.startsWith('/api/ims/')));
+
+    // All five modules are implemented now. If a future module is mounted
+    // without handlers, add it back here — documenting it would promise a 404.
   });
 
   it('keeps login and health outside the bearer requirement', () => {

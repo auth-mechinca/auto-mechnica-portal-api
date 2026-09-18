@@ -15,12 +15,12 @@
 | Backoffice — purchase orders | **Done** — list, detail, receive stock with the full cost-to-price chain |
 | Backoffice — price management | **Done** — list with derived status, cost basis and history, set a price, change the shop margin |
 | Backoffice — suppliers, PO create | **Done** — supplier CRUD with deactivation, drafting a PO, sending, cancelling |
-| IMS | **Not started** — router mounted, no handlers |
+| IMS | **Done** — catalogue, part detail with its stock ledger, adjustments, low stock |
 | Financial Core | **Done** — customer accounts with ageing, account detail, recording payments, the cheque queue |
 | Next.js frontend | **Not started** — repo is an empty initial commit |
 | API documentation | **Done** — OpenAPI 3.1 at `/openapi.json`, Swagger UI at `/docs` |
 
-**166 tests pass.** The spine of the demo now works end to end on the server: receive a purchase order at a new FX rate, watch the landed cost and suggested price move, then sell the part at the till and watch stock and the customer balance follow. What is missing is a face — nothing is wired to a screen yet.
+**190 tests pass.** The spine of the demo now works end to end on the server: receive a purchase order at a new FX rate, watch the landed cost and suggested price move, then sell the part at the till and watch stock and the customer balance follow. What is missing is a face — nothing is wired to a screen yet.
 
 ---
 
@@ -113,6 +113,11 @@ Every module is two files, and the split is strict. `routes.ts` holds the router
 | `POST /api/backoffice/purchase-orders/:id/send` | purchasing | Needs a rate and a line |
 | `POST /api/backoffice/purchase-orders/:id/cancel` | purchasing | Only before anything arrives |
 | `POST /api/backoffice/purchase-orders/:id/close` | purchasing | Short-close: write off what is not coming |
+| `GET`/`POST /api/ims/parts` | purchasing | Catalogue with filter facets; a new part starts at zero stock |
+| `GET`/`PATCH /api/ims/parts/:id` | purchasing | Detail with the stock ledger; no stock field on the edit |
+| `POST /api/ims/parts/:id/adjust` | purchasing | Damage, loss, count correction — reason required |
+| `GET /api/ims/adjustments` | purchasing | Recent adjustments across parts |
+| `GET /api/ims/low-stock` | purchasing | With usual supplier and what is already on order |
 
 Admin reaches everything.
 
@@ -157,6 +162,28 @@ rather than a flag anyone has to remember to raise.
 Changing the global margin affects what is suggested from then on. Prices already
 saved are left alone: they were decisions taken at the margin of the day, and
 recomputing them would silently reprice the catalogue.
+
+### Inventory
+
+The rule the module is arranged around: **stock is never typed.** No endpoint
+sets a balance. It moves through a purchase order receipt, a sale, or an
+adjustment carrying a reason, and each writes a movement explaining itself. The
+edit form has no stock field, and a new part starts at zero rather than with an
+opening quantity.
+
+Part detail returns the ledger with a running `onHandAfter` computed from the
+movements rather than stored, so the newest row can be checked against the
+balance at the top of the screen. They disagree only if something wrote a balance
+without a movement — which is the failure this arrangement exists to make
+visible.
+
+An adjustment requires a reason, because one without it is indistinguishable
+from somebody editing stock to whatever they wanted. A decrease that would go
+below zero is refused.
+
+Low stock carries what a purchasing officer needs in order to act: how short,
+who supplied it most recently, and **anything already expected on an open
+order** — the shortfall may be covered already, and reordering would double up.
 
 ### Suppliers and drafting a purchase order
 
@@ -290,13 +317,15 @@ Added during the wireframing and API passes: per-customer payment terms, credit 
 
 ## 7. What's next
 
-**IMS** is the only module left without handlers — catalogue maintenance, manual stock adjustment, and the low-stock list. Receiving already covers the stock movements that matter, so it is the smallest of the five.
+**The frontend.** It is the only thing left.
 
-Then the frontend, which is the real answer.
+All five demo areas now have an API behind them, and every screen in the 26
+wireframes has endpoints to draw from. Nothing else on the backend is blocking a
+demo — what is blocking one is that none of it can be seen.
 
-The whole spine now runs on the server: receive a purchase order at a new rate, watch the landed cost and suggestion move, see the part flagged for review, confirm a price, find that figure at the till, sell on a cheque, and watch the balance move only when the accountant clears it. Suppliers and purchase orders can now be created from nothing, so the whole chain runs without seeded data standing in for a step.
+The whole spine now runs on the server: receive a purchase order at a new rate, watch the landed cost and suggestion move, see the part flagged for review, confirm a price, find that figure at the till, sell on a cheque, and watch the balance move only when the accountant clears it. Suppliers and purchase orders can be created from nothing, so the whole chain runs without seeded data standing in for a step, and the catalogue behind it can be maintained.
 
-That leaves IMS as the only module without handlers, and the frontend as an empty scaffold. The frontend is unambiguously the critical path now — none of this is demonstrable to the client without screens.
+**The backend for the demo is complete.** All five areas the client asked to see — POS, IMS, Financial Core, RBAC and Backoffice — are implemented, documented and tested. The frontend is an empty scaffold, and is now the only thing between this and something the client can be shown.
 
 The frontend remains untouched. At some point that becomes the critical path, since none of the above is demonstrable without it.
 
