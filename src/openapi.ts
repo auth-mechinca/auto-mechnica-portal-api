@@ -2,6 +2,7 @@ import { z } from 'zod';
 import * as authService from './modules/auth/service.js';
 import * as backofficeService from './modules/backoffice/service.js';
 import * as financialService from './modules/financial/service.js';
+import * as imsService from './modules/ims/service.js';
 import * as posService from './modules/pos/service.js';
 
 /** The OpenAPI document, generated from the very zod schemas the API validates
@@ -77,8 +78,8 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         '',
         '**Not yet implemented.** The IMS, Financial Core and Backoffice routers are',
         'mounted and enforce their roles, but carry no handlers. They are omitted',
-        'here rather than documented as promises. IMS is the only module with no',
-        'handlers yet.',
+        'here rather than documented as promises. All five modules are now',
+        'implemented.',
       ].join('\n'),
     },
     servers: [{ url: 'http://localhost:4000', description: 'Local development' }],
@@ -94,6 +95,11 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         name: 'Prices',
         description:
           'Section 6.3. Requires the **purchasing** or **admin** role. The final price set here is the only price figure Sales ever sees.',
+      },
+      {
+        name: 'Inventory',
+        description:
+          'Section 4. Requires the **purchasing** or **admin** role. Stock is never typed: it moves only through a purchase order receipt, a sale, or an adjustment recorded with a reason.',
       },
       {
         name: 'Suppliers',
@@ -146,6 +152,13 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         CreatePurchaseOrderRequest: jsonSchema(backofficeService.createPurchaseOrderInput, 'input'),
         ClosePurchaseOrderRequest: jsonSchema(backofficeService.closePurchaseOrderInput, 'input'),
         CancelPurchaseOrderRequest: jsonSchema(backofficeService.cancelPurchaseOrderInput, 'input'),
+        Parts: jsonSchema(imsService.partsResponse, 'output'),
+        PartDetail: jsonSchema(imsService.partDetail, 'output'),
+        CreatePartRequest: jsonSchema(imsService.createPartInput, 'input'),
+        UpdatePartRequest: jsonSchema(imsService.updatePartInput, 'input'),
+        AdjustStockRequest: jsonSchema(imsService.adjustStockInput, 'input'),
+        LowStockRow: jsonSchema(imsService.lowStockRow, 'output'),
+        Adjustment: jsonSchema(imsService.adjustmentRow, 'output'),
         UpdatePurchaseOrderRequest: jsonSchema(backofficeService.updatePurchaseOrderInput, 'input'),
         UpdateSettingsRequest: jsonSchema(backofficeService.updateSettingsInput, 'input'),
       },
@@ -209,6 +222,123 @@ export function buildOpenApiDocument(): Record<string, unknown> {
           responses: {
             200: { description: 'The current user', content: json(ref('User')) },
             401: AUTH_ERRORS[401],
+          },
+        },
+      },
+
+      '/api/ims/parts': {
+        get: {
+          tags: ['Inventory'],
+          summary: 'The parts catalogue',
+          description:
+            'Returns the parts plus the category and brand lists for the filters, drawn from what actually exists, and a count of how many sit at or below their reorder point.',
+          parameters: [
+            { name: 'q', in: 'query', required: false, schema: { type: 'string' }, description: 'Match name, SKU, part number or OEM number' },
+            { name: 'category', in: 'query', required: false, schema: { type: 'string' } },
+            { name: 'brand', in: 'query', required: false, schema: { type: 'string' } },
+            { name: 'belowReorder', in: 'query', required: false, schema: { type: 'boolean' } },
+            {
+              name: 'status',
+              in: 'query',
+              required: false,
+              schema: { type: 'string', enum: ['active', 'inactive', 'all'], default: 'active' },
+            },
+          ],
+          responses: {
+            200: { description: 'Parts with filter facets', content: json(ref('Parts')) },
+            ...AUTH_ERRORS,
+          },
+        },
+        post: {
+          tags: ['Inventory'],
+          summary: 'Create a part',
+          description:
+            'A new part starts at zero stock. There is no quantity field: stock arrives through a purchase order receipt, never at creation. `fitment` is free-text Year/Make/Model/Engine lines — not a cross-reference database, per Section 4.',
+          requestBody: { required: true, content: json(ref('CreatePartRequest')) },
+          responses: {
+            201: { description: 'Created', content: json(ref('PartDetail')) },
+            409: errorResponse('That SKU is already in use'),
+            ...AUTH_ERRORS,
+          },
+        },
+      },
+
+      '/api/ims/parts/{id}': {
+        get: {
+          tags: ['Inventory'],
+          summary: 'One part, with its stock ledger',
+          description:
+            '`movements` carries a running `onHandAfter` computed from the ledger rather than stored, so the newest row can be checked against the balance at the top. They disagree only if something wrote a balance without a movement. Landed cost is included here and never in the POS search.',
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: {
+            200: { description: 'The part', content: json(ref('PartDetail')) },
+            404: errorResponse('Part not found'),
+            ...AUTH_ERRORS,
+          },
+        },
+        patch: {
+          tags: ['Inventory'],
+          summary: 'Edit a part',
+          description:
+            'Details only. There is deliberately no stock field — a balance cannot be edited here or anywhere. Setting `isActive: false` keeps the part and its history but takes it out of the working list.',
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          requestBody: { required: true, content: json(ref('UpdatePartRequest')) },
+          responses: {
+            200: { description: 'Updated', content: json(ref('PartDetail')) },
+            404: errorResponse('Part not found'),
+            409: errorResponse('That SKU is already in use'),
+            ...AUTH_ERRORS,
+          },
+        },
+      },
+
+      '/api/ims/parts/{id}/adjust': {
+        post: {
+          tags: ['Inventory'],
+          summary: 'Correct stock, with a reason',
+          description: [
+            'For damage, loss and count corrections. Deliveries come in through a',
+            'purchase order — this is not a way to receive stock.',
+            '',
+            'The reason is required. An adjustment without one is indistinguishable from',
+            'somebody editing stock to whatever they wanted, which is exactly what the',
+            'ledger exists to prevent.',
+            '',
+            'Writes one movement and moves the balance in the same transaction, so the',
+            'two can never disagree. A decrease that would take stock below zero is',
+            'refused.',
+          ].join('\n'),
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          requestBody: { required: true, content: json(ref('AdjustStockRequest')) },
+          responses: {
+            200: { description: 'Adjusted', content: json(ref('PartDetail')) },
+            404: errorResponse('Part not found'),
+            409: errorResponse('The part is inactive, or the decrease would go below zero'),
+            ...AUTH_ERRORS,
+          },
+        },
+      },
+
+      '/api/ims/adjustments': {
+        get: {
+          tags: ['Inventory'],
+          summary: 'Recent adjustments across all parts',
+          responses: {
+            200: { description: 'Newest first', content: json({ type: 'array', items: ref('Adjustment') }) },
+            ...AUTH_ERRORS,
+          },
+        },
+      },
+
+      '/api/ims/low-stock': {
+        get: {
+          tags: ['Inventory'],
+          summary: 'Parts at or below their reorder point',
+          description:
+            'Each row carries how short it is, who supplied it most recently, and anything still expected on an open purchase order — because the shortfall may already be covered, and reordering would double up.',
+          responses: {
+            200: { description: 'Shortest first', content: json({ type: 'array', items: ref('LowStockRow') }) },
+            ...AUTH_ERRORS,
           },
         },
       },
