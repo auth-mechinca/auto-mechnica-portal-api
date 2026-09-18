@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { getDb, type Tx } from '../../db/client.js';
 import { defaultLocationId } from '../../db/defaults.js';
 import {
+  brands,
+  categories,
   inventoryBalances,
   parts,
   prices,
@@ -31,8 +33,8 @@ export type PartIdParam = z.infer<typeof partIdParam>;
 
 export const listPartsQuery = z.object({
   q: z.string().trim().min(1).max(100).optional(),
-  category: z.string().trim().min(1).max(100).optional(),
-  brand: z.string().trim().min(1).max(100).optional(),
+  categoryId: z.string().uuid().optional(),
+  brandId: z.string().uuid().optional(),
   belowReorder: z.coerce.boolean().optional(),
   status: z.enum(['active', 'inactive', 'all']).default('active'),
 });
@@ -43,8 +45,10 @@ const partFields = {
   name: z.string().trim().min(1).max(200),
   partNumber: z.string().trim().max(100).nullish(),
   oemNumber: z.string().trim().max(100).nullish(),
-  brand: z.string().trim().max(100).nullish(),
-  category: z.string().trim().max(100).nullish(),
+  /** References now, not free text. The UI picks from the category and brand
+   *  endpoints, creating one on the fly if the officer types a new name. */
+  brandId: z.string().uuid().nullish(),
+  categoryId: z.string().uuid().nullish(),
   /** Free-text Year/Make/Model/Engine lines. Section 4 is explicit that this is
    *  not a cross-reference database for the demo. */
   fitment: z.array(z.string().trim().min(1).max(200)).default([]),
@@ -76,8 +80,8 @@ export const partRow = z.object({
   name: z.string(),
   partNumber: z.string().nullable(),
   oemNumber: z.string().nullable(),
-  brand: z.string().nullable(),
-  category: z.string().nullable(),
+  brand: z.object({ id: z.string().uuid(), name: z.string() }).nullable(),
+  category: z.object({ id: z.string().uuid(), name: z.string() }).nullable(),
   fitment: z.array(z.string()),
   reorderPoint: z.number(),
   isActive: z.boolean(),
@@ -90,9 +94,6 @@ export type PartRow = z.infer<typeof partRow>;
 
 export const partsResponse = z.object({
   parts: z.array(partRow),
-  /** For the filter dropdowns, drawn from what actually exists. */
-  categories: z.array(z.string()),
-  brands: z.array(z.string()),
   belowReorderCount: z.number(),
 });
 export type PartsResponse = z.infer<typeof partsResponse>;
@@ -123,7 +124,7 @@ export const lowStockRow = z.object({
   id: z.string().uuid(),
   sku: z.string(),
   name: z.string(),
-  brand: z.string().nullable(),
+  brand: z.object({ id: z.string().uuid(), name: z.string() }).nullable(),
   onHand: z.string(),
   reorderPoint: z.number(),
   shortBy: z.string(),
@@ -148,7 +149,12 @@ export type AdjustmentRow = z.infer<typeof adjustmentRow>;
 
 /* ---------------------------------------------------------------- reading */
 
-type PartQueryRow = Omit<PartRow, 'belowReorderPoint'>;
+type PartQueryRow = Omit<PartRow, 'belowReorderPoint' | 'brand' | 'category'> & {
+  brandId: string | null;
+  brandName: string | null;
+  categoryId: string | null;
+  categoryName: string | null;
+};
 
 const like = (value: string) => `%${value.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
 
@@ -166,8 +172,8 @@ export async function listParts(query: ListPartsQuery): Promise<PartsResponse> {
       ? sql`(p.name ilike ${like(query.q)} or p.sku ilike ${like(query.q)}
              or p.part_number ilike ${like(query.q)} or p.oem_number ilike ${like(query.q)})`
       : undefined,
-    query.category ? sql`p.category = ${query.category}` : undefined,
-    query.brand ? sql`p.brand = ${query.brand}` : undefined,
+    query.categoryId ? sql`p.category_id = ${query.categoryId}` : undefined,
+    query.brandId ? sql`p.brand_id = ${query.brandId}` : undefined,
   ].filter((c) => c !== undefined);
 
   const where =
@@ -179,8 +185,10 @@ export async function listParts(query: ListPartsQuery): Promise<PartsResponse> {
            p.name,
            p.part_number   as "partNumber",
            p.oem_number    as "oemNumber",
-           p.brand,
-           p.category,
+           p.brand_id      as "brandId",
+           b2.name         as "brandName",
+           p.category_id   as "categoryId",
+           c2.name         as "categoryName",
            p.fitment,
            p.reorder_point as "reorderPoint",
            p.is_active     as "isActive",
@@ -191,26 +199,25 @@ export async function listParts(query: ListPartsQuery): Promise<PartsResponse> {
       from ${parts} p
       left join ${inventoryBalances} b on b.part_id = p.id
       left join ${prices} pr on pr.part_id = p.id
+      left join ${brands} b2 on b2.id = p.brand_id
+      left join ${categories} c2 on c2.id = p.category_id
     ${where}
      order by p.name
   `);
 
-  const all = rows.map((row) => ({
+  const all = rows.map(({ brandId, brandName, categoryId, categoryName, ...row }) => ({
     ...row,
+    brand: brandId ? { id: brandId, name: brandName! } : null,
+    category: categoryId ? { id: categoryId, name: categoryName! } : null,
     reorderPoint: Number(row.reorderPoint),
     belowReorderPoint: compare(row.onHand, String(row.reorderPoint)) <= 0,
   }));
 
-  const { rows: facets } = await db.execute<{ categories: string[]; brands: string[] }>(sql`
-    select coalesce(array_agg(distinct category) filter (where category is not null), '{}') as categories,
-           coalesce(array_agg(distinct brand) filter (where brand is not null), '{}') as brands
-      from ${parts} where is_active
-  `);
-
+  // The filter dropdowns come from the category and brand endpoints now. They
+  // used to be a `distinct` over whatever anyone had typed, which reported the
+  // duplicates rather than preventing them.
   return {
     parts: query.belowReorder ? all.filter((p) => p.belowReorderPoint) : all,
-    categories: facets[0]!.categories.sort(),
-    brands: facets[0]!.brands.sort(),
     belowReorderCount: all.filter((p) => p.belowReorderPoint).length,
   };
 }
@@ -285,7 +292,8 @@ export async function listLowStock(): Promise<LowStockRow[]> {
     id: string;
     sku: string;
     name: string;
-    brand: string | null;
+    brandId: string | null;
+    brandName: string | null;
     onHand: string;
     reorderPoint: number;
     lastReceived: string | null;
@@ -297,7 +305,8 @@ export async function listLowStock(): Promise<LowStockRow[]> {
     select p.id,
            p.sku,
            p.name,
-           p.brand,
+           p.brand_id  as "brandId",
+           br.name     as "brandName",
            coalesce(b.quantity, 0)::numeric(14, 3)::text as "onHand",
            p.reorder_point as "reorderPoint",
            (select max(m.created_at) from ${stockMovements} m
@@ -328,6 +337,7 @@ export async function listLowStock(): Promise<LowStockRow[]> {
              order by o.order_date desc limit 1)                 as "onOrderReference"
       from ${parts} p
       left join ${inventoryBalances} b on b.part_id = p.id
+      left join ${brands} br on br.id = p.brand_id
      where p.is_active
        and coalesce(b.quantity, 0) <= p.reorder_point
      order by (p.reorder_point - coalesce(b.quantity, 0)) desc, p.name
@@ -337,7 +347,7 @@ export async function listLowStock(): Promise<LowStockRow[]> {
     id: row.id,
     sku: row.sku,
     name: row.name,
-    brand: row.brand,
+    brand: row.brandId ? { id: row.brandId, name: row.brandName! } : null,
     onHand: row.onHand,
     reorderPoint: Number(row.reorderPoint),
     shortBy: subtract(String(row.reorderPoint), row.onHand),
@@ -401,8 +411,8 @@ export async function createPart(input: CreatePartInput): Promise<PartDetail> {
         name: input.name,
         partNumber: input.partNumber ?? null,
         oemNumber: input.oemNumber ?? null,
-        brand: input.brand ?? null,
-        category: input.category ?? null,
+        brandId: input.brandId ?? null,
+        categoryId: input.categoryId ?? null,
         fitment: input.fitment,
         reorderPoint: input.reorderPoint,
         isActive: input.isActive,
@@ -506,3 +516,147 @@ export async function adjustStock(
 
   return getPart(partId);
 }
+
+/* ---------------------------------------------------- categories and brands */
+
+/** Both are the same shape and the same rules, kept parallel rather than behind
+ *  a shared abstraction: two short readable blocks beat one generic one that
+ *  has to fight the query builder's types.
+ *
+ *  Neither is ever deleted. A part points at one, and removing the row would
+ *  leave that part uncategorised — so they are deactivated, as suppliers are.
+ */
+
+export const taxonomyIdParam = z.object({ id: z.string().uuid() });
+export type TaxonomyIdParam = z.infer<typeof taxonomyIdParam>;
+
+export const listTaxonomyQuery = z.object({
+  q: z.string().trim().min(1).max(100).optional(),
+  status: z.enum(['active', 'inactive', 'all']).default('active'),
+});
+export type ListTaxonomyQuery = z.infer<typeof listTaxonomyQuery>;
+
+export const createTaxonomyInput = z.object({
+  name: z.string().trim().min(1).max(100),
+});
+export type CreateTaxonomyInput = z.infer<typeof createTaxonomyInput>;
+
+export const updateTaxonomyInput = z.object({
+  name: z.string().trim().min(1).max(100).optional(),
+  isActive: z.boolean().optional(),
+});
+export type UpdateTaxonomyInput = z.infer<typeof updateTaxonomyInput>;
+
+export const taxonomyRow = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  isActive: z.boolean(),
+  /** How many parts use it, so a screen can say what deactivating would affect. */
+  partCount: z.number(),
+});
+export type TaxonomyRow = z.infer<typeof taxonomyRow>;
+
+type Taxonomy = typeof categories | typeof brands;
+
+const partColumnFor = (table: Taxonomy) =>
+  table === categories ? parts.categoryId : parts.brandId;
+
+const labelFor = (table: Taxonomy) => (table === categories ? 'Category' : 'Brand');
+
+async function listTaxonomy(table: Taxonomy, query: ListTaxonomyQuery): Promise<TaxonomyRow[]> {
+  const db = getDb();
+  const status = query.status ?? 'active';
+  const partColumn = partColumnFor(table);
+
+  const conditions = [
+    status === 'all' ? undefined : eq(table.isActive, status === 'active'),
+    query.q ? sql`${table.name} ilike ${like(query.q)}` : undefined,
+  ].filter((c) => c !== undefined);
+
+  const rows = await db
+    .select({ id: table.id, name: table.name, isActive: table.isActive })
+    .from(table)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(table.name);
+
+  // Counted separately rather than as a correlated subquery: interpolating a
+  // column into raw SQL renders it unqualified, which inside a subquery with its
+  // own FROM silently resolves against the wrong table.
+  const counts = await db
+    .select({ id: partColumn, used: sql<number>`count(*)::int` })
+    .from(parts)
+    .groupBy(partColumn);
+
+  const used = new Map(counts.map((c) => [c.id, c.used]));
+  return rows.map((row) => ({ ...row, partCount: used.get(row.id) ?? 0 }));
+}
+
+async function createTaxonomy(
+  table: Taxonomy,
+  input: CreateTaxonomyInput,
+): Promise<TaxonomyRow> {
+  const db = getDb();
+
+  // Trimmed here rather than relying on the schema having done it. The unique
+  // index is on lower(name), so a name arriving with a stray space would miss
+  // the clash check and land as a second row that looks identical on screen —
+  // which is the exact failure this table exists to prevent.
+  const name = input.name.trim();
+
+  // Case-insensitive, matching the index: "Electrical" and "electrical" are the
+  // same category, not two that look alike in a dropdown.
+  const [clash] = await db
+    .select({ id: table.id, name: table.name })
+    .from(table)
+    .where(sql`lower(${table.name}) = lower(${name})`)
+    .limit(1);
+
+  if (clash) {
+    throw ApiError.conflict(`${labelFor(table)} "${clash.name}" already exists`);
+  }
+
+  const [created] = await db.insert(table).values({ name }).returning();
+  return { id: created!.id, name: created!.name, isActive: created!.isActive, partCount: 0 };
+}
+
+async function updateTaxonomy(
+  table: Taxonomy,
+  id: string,
+  input: UpdateTaxonomyInput,
+): Promise<TaxonomyRow> {
+  const db = getDb();
+
+  const [existing] = await db.select().from(table).where(eq(table.id, id)).limit(1);
+  if (!existing) throw ApiError.notFound(`${labelFor(table)} not found`);
+
+  const name = input.name?.trim();
+
+  if (name && name.toLowerCase() !== existing.name.toLowerCase()) {
+    const [clash] = await db
+      .select({ name: table.name })
+      .from(table)
+      .where(sql`lower(${table.name}) = lower(${name})`)
+      .limit(1);
+    if (clash) throw ApiError.conflict(`${labelFor(table)} "${clash.name}" already exists`);
+  }
+
+  await db
+    .update(table)
+    .set({ ...input, ...(name ? { name } : {}), updatedAt: new Date() })
+    .where(eq(table.id, id));
+
+  const [row] = await listTaxonomy(table, { status: 'all' }).then((rows) =>
+    rows.filter((r) => r.id === id),
+  );
+  return row!;
+}
+
+export const listCategories = (query: ListTaxonomyQuery) => listTaxonomy(categories, query);
+export const createCategory = (input: CreateTaxonomyInput) => createTaxonomy(categories, input);
+export const updateCategory = (id: string, input: UpdateTaxonomyInput) =>
+  updateTaxonomy(categories, id, input);
+
+export const listBrands = (query: ListTaxonomyQuery) => listTaxonomy(brands, query);
+export const createBrand = (input: CreateTaxonomyInput) => createTaxonomy(brands, input);
+export const updateBrand = (id: string, input: UpdateTaxonomyInput) =>
+  updateTaxonomy(brands, id, input);

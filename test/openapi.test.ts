@@ -63,7 +63,11 @@ describe('the OpenAPI document', () => {
     // is sent, so an existing protected route answers 401 or 403 — anything but
     // 404 proves the path is real.
     for (const [path, operations] of Object.entries(doc.paths)) {
-      const url = path.replace('{id}', '99999999-9999-4999-8999-999999999999');
+      // `{taxonomy}` documents /categories and /brands together, which behave
+      // identically. Check a real one rather than the placeholder.
+      const url = path
+        .replace('{taxonomy}', 'categories')
+        .replace('{id}', '99999999-9999-4999-8999-999999999999');
 
       for (const method of Object.keys(operations)) {
         const res = await request(server)[method as 'get' | 'post'](url).send({});

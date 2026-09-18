@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import { appSchema } from './schema.js';
 import { boolean, index, integer, text, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { ghs, pct, primaryKey, timestamps } from './common.js';
@@ -15,6 +16,40 @@ export const locations = appSchema.table('locations', {
   ...timestamps,
 });
 
+/** Categories and brands are their own rows rather than free text on a part.
+ *
+ *  As text they drifted immediately: one person typed "Electrical" and another
+ *  "Electrical and Charging", and the filter list simply reported both. Nothing
+ *  could tell a new category from a typo of an existing one.
+ *
+ *  The unique index is on the lowercased name, so "Electrical" and "electrical"
+ *  collide rather than becoming two entries that look identical on screen.
+ *
+ *  Neither is deleted once used — a part points at one, and losing the row would
+ *  leave that part uncategorised. They are deactivated instead, the same way
+ *  suppliers are. */
+export const categories = appSchema.table(
+  'categories',
+  {
+    id: primaryKey(),
+    name: text('name').notNull(),
+    isActive: boolean('is_active').notNull().default(true),
+    ...timestamps,
+  },
+  (t) => [uniqueIndex('categories_name_lower_idx').on(sql`lower(${t.name})`)],
+);
+
+export const brands = appSchema.table(
+  'brands',
+  {
+    id: primaryKey(),
+    name: text('name').notNull(),
+    isActive: boolean('is_active').notNull().default(true),
+    ...timestamps,
+  },
+  (t) => [uniqueIndex('brands_name_lower_idx').on(sql`lower(${t.name})`)],
+);
+
 export const parts = appSchema.table(
   'parts',
   {
@@ -23,8 +58,10 @@ export const parts = appSchema.table(
     name: text('name').notNull(),
     partNumber: text('part_number'),
     oemNumber: text('oem_number'),
-    brand: text('brand'),
-    category: text('category'),
+    /** Both are references now, not free text. The text columns they replaced
+     *  were backfilled into `brands` and `categories` in migration 0009. */
+    brandId: uuid('brand_id').references(() => brands.id, { onDelete: 'restrict' }),
+    categoryId: uuid('category_id').references(() => categories.id, { onDelete: 'restrict' }),
     /** Demo-level fitment: free-text Year/Make/Model/Engine entries, not a
      *  normalised cross-reference database. Section 4 of the demo scope. */
     fitment: text('fitment').array().notNull().default([]),

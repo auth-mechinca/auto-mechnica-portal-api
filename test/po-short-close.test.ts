@@ -39,7 +39,7 @@ before(async () => {
 
   const [part] = await db
     .insert(parts)
-    .values({ sku: 'SA-3307', name: 'Shock absorber, rear', brand: 'KYB' })
+    .values({ sku: 'SA-3307', name: 'Shock absorber, rear' })
     .returning();
   brakePadId = part!.id;
 

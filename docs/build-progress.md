@@ -20,7 +20,7 @@
 | Next.js frontend | **Not started** — repo is an empty initial commit |
 | API documentation | **Done** — OpenAPI 3.1 at `/openapi.json`, Swagger UI at `/docs` |
 
-**191 tests pass.** The spine of the demo now works end to end on the server: receive a purchase order at a new FX rate, watch the landed cost and suggested price move, then sell the part at the till and watch stock and the customer balance follow. What is missing is a face — nothing is wired to a screen yet.
+**204 tests pass.** The spine of the demo now works end to end on the server: receive a purchase order at a new FX rate, watch the landed cost and suggested price move, then sell the part at the till and watch stock and the customer balance follow. What is missing is a face — nothing is wired to a screen yet.
 
 ---
 
@@ -118,6 +118,9 @@ Every module is two files, and the split is strict. `routes.ts` holds the router
 | `POST /api/ims/parts/:id/adjust` | purchasing | Damage, loss, count correction — reason required |
 | `GET /api/ims/adjustments` | purchasing | Recent adjustments across parts |
 | `GET /api/ims/low-stock` | purchasing | With usual supplier and what is already on order |
+| `GET`/`POST /api/ims/categories` | purchasing | For the type-ahead dropdown, and creating one on the fly |
+| `PATCH /api/ims/categories/:id` | purchasing | Rename, or deactivate |
+| `GET`/`POST`/`PATCH /api/ims/brands` | purchasing | The same, for brands |
 
 Admin reaches everything.
 
@@ -184,6 +187,33 @@ below zero is refused.
 Low stock carries what a purchasing officer needs in order to act: how short,
 who supplied it most recently, and **anything already expected on an open
 order** — the shortfall may be covered already, and reordering would double up.
+
+### Categories and brands
+
+Both were free text on a part, and drifted the first day they were used: one part
+went in as "Electrical" and another as "Electrical and Charging", and the filter
+list simply reported both. Nothing could tell a new category from a typo of an
+existing one, and the exact-match filter then hid a part from the very category
+its author thought they had chosen.
+
+They are rows now, referenced by id, with a unique index on the lowercased name —
+so "Electrical", "electrical" and " Electrical " are one category rather than
+three that look identical on screen. Names are trimmed on write rather than
+trusting the caller to have done it.
+
+Neither is ever deleted. A part points at one, and losing the row would leave
+that part uncategorised, so they are deactivated like suppliers. Renaming reaches
+every part using it, because the part holds a reference rather than the text.
+
+The part list no longer returns the category and brand lists; the dropdowns come
+from their own endpoints, which also report how many parts use each. POS search
+still returns a brand *name* and no id — the till prints "BP-2042 · Bosch" and
+has no business managing brands.
+
+Migrations 0008–0010 do this in three steps: add the tables and the reference
+columns, backfill the existing text into rows and point the parts at them, then
+drop the text columns. The backfill is a custom migration rather than a generated
+one, because drizzle generates structure and moving the values is a separate job.
 
 ### Suppliers and drafting a purchase order
 

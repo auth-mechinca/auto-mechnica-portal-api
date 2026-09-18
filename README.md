@@ -264,7 +264,7 @@ disagreeing. Run it after `db:reset` for a clean history; that is the normal cas
 ## Tests
 
 ```bash
-npm test        # 191 tests
+npm test        # 204 tests
 npm run typecheck
 ```
 
@@ -294,6 +294,7 @@ constraint is genuinely missing.
 | `test/po-short-close.test.ts` | Writing off a short delivery without disturbing what arrived |
 | `test/ims-catalogue.test.ts` | Parts, filters, and that no path through the catalogue can set stock |
 | `test/ims-stock.test.ts` | Adjustments with reasons, the running ledger, and low stock |
+| `test/ims-taxonomy.test.ts` | That two spellings of one category cannot both exist, and that renaming reaches every part |
 | `test/migrations.test.ts` | Migration applies cleanly, 17 tables in `app`, nothing in `public`, no balance column anywhere |
 | `test/money.test.ts` | GHS returned as exact strings, FX scale, and landed cost = USD x rate |
 | `test/constraints.test.ts` | Duplicate SKU, dangling FK, duplicate balance per part/location |

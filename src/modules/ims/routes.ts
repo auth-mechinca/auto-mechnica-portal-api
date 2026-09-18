@@ -60,6 +60,62 @@ imsRouter.get(
   }),
 );
 
+/* Categories and brands. The UI filters a dropdown against these as the officer
+ * types, and offers to create one when nothing matches — which is a UI flow over
+ * these two endpoints, not a special mode on either of them. */
+
+imsRouter.get(
+  '/categories',
+  validateQuery(service.listTaxonomyQuery),
+  asyncHandler(async (_req, res) => {
+    res.json(await service.listCategories(res.locals.query as service.ListTaxonomyQuery));
+  }),
+);
+
+imsRouter.post(
+  '/categories',
+  validateBody(service.createTaxonomyInput),
+  asyncHandler(async (req, res) => {
+    res.status(201).json(await service.createCategory(req.body));
+  }),
+);
+
+imsRouter.patch(
+  '/categories/:id',
+  validateParams(service.taxonomyIdParam),
+  validateBody(service.updateTaxonomyInput),
+  asyncHandler(async (req, res) => {
+    const { id } = res.locals.params as service.TaxonomyIdParam;
+    res.json(await service.updateCategory(id, req.body));
+  }),
+);
+
+imsRouter.get(
+  '/brands',
+  validateQuery(service.listTaxonomyQuery),
+  asyncHandler(async (_req, res) => {
+    res.json(await service.listBrands(res.locals.query as service.ListTaxonomyQuery));
+  }),
+);
+
+imsRouter.post(
+  '/brands',
+  validateBody(service.createTaxonomyInput),
+  asyncHandler(async (req, res) => {
+    res.status(201).json(await service.createBrand(req.body));
+  }),
+);
+
+imsRouter.patch(
+  '/brands/:id',
+  validateParams(service.taxonomyIdParam),
+  validateBody(service.updateTaxonomyInput),
+  asyncHandler(async (req, res) => {
+    const { id } = res.locals.params as service.TaxonomyIdParam;
+    res.json(await service.updateBrand(id, req.body));
+  }),
+);
+
 imsRouter.get(
   '/low-stock',
   asyncHandler(async (_req, res) => {

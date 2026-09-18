@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import type { Db } from '../../src/db/client.js';
 import { hashPassword } from '../../src/lib/password.js';
 import {
+  brands,
   customers,
   inventoryBalances,
   locations,
@@ -44,8 +45,10 @@ export async function baseFixture(db: Db) {
 export async function shopFixture(db: Db) {
   const base = await baseFixture(db);
 
+  const [bosch] = await db.insert(brands).values({ name: 'Bosch' }).returning();
+
   const made = async (sku: string, name: string, price: string | null, stock: string) => {
-    const [part] = await db.insert(parts).values({ sku, name, brand: 'Bosch' }).returning();
+    const [part] = await db.insert(parts).values({ sku, name, brandId: bosch!.id }).returning();
     if (price !== null) {
       await db.insert(prices).values({
         partId: part!.id,
