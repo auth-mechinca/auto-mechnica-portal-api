@@ -43,6 +43,13 @@
       "when": 1789662363834,
       "tag": "0005_suppliers_and_draft_po",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789710177535,
+      "tag": "0006_short_close_purchase_order",
+      "breakpoints": true
     }
   ]
 }

@@ -65,6 +65,15 @@ backofficeRouter.post(
 );
 
 backofficeRouter.post(
+  '/purchase-orders/:id/close',
+  validateParams(service.purchaseOrderIdParam),
+  asyncHandler(async (_req, res) => {
+    const { id } = res.locals.params as service.PurchaseOrderIdParam;
+    res.json(await service.closePurchaseOrder(id));
+  }),
+);
+
+backofficeRouter.post(
   '/purchase-orders/:id/receive',
   validateParams(service.purchaseOrderIdParam),
   validateBody(service.receiveStockInput),

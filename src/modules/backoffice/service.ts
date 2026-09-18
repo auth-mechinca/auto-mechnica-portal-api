@@ -25,11 +25,20 @@ import { add, compare, multiply, sum, suggestedPrice as suggestedPriceFor } from
 
 /* ------------------------------------------------------------------ input */
 
+const poStatusSchema = z.enum([
+  'draft',
+  'sent',
+  'partially_received',
+  'received',
+  'cancelled',
+  'closed',
+]);
+
 export const purchaseOrderIdParam = z.object({ id: z.string().uuid() });
 export type PurchaseOrderIdParam = z.infer<typeof purchaseOrderIdParam>;
 
 export const listPurchaseOrdersQuery = z.object({
-  status: z.enum(['draft', 'sent', 'partially_received', 'received', 'cancelled']).optional(),
+  status: poStatusSchema.optional(),
   supplierId: z.string().uuid().optional(),
 });
 export type ListPurchaseOrdersQuery = z.infer<typeof listPurchaseOrdersQuery>;
@@ -49,14 +58,6 @@ export const receiveStockInput = z.object({
 export type ReceiveStockInput = z.infer<typeof receiveStockInput>;
 
 /* ----------------------------------------------------------------- output */
-
-const poStatusSchema = z.enum([
-  'draft',
-  'sent',
-  'partially_received',
-  'received',
-  'cancelled',
-]);
 
 export const purchaseOrderSummary = z.object({
   id: z.string().uuid(),
@@ -78,7 +79,12 @@ export const purchaseOrderDetail = purchaseOrderSummary.extend({
   receivedUnits: z.number(),
   /** Landed value of what has arrived, and of what is still to come. */
   receivedGhs: z.string().nullable(),
+  /** What is still expected. Zero on a short-closed order: the rest is not
+   *  coming, which is the whole point of closing it. */
   outstandingGhs: z.string().nullable(),
+  /** Value of what was ordered and never arrived, on a short-closed order.
+   *  Null on every other status, where nothing has been written off. */
+  writtenOffGhs: z.string().nullable(),
   lines: z.array(
     z.object({
       id: z.string().uuid(),
@@ -309,7 +315,13 @@ export async function getPurchaseOrder(id: string): Promise<PurchaseOrderDetail>
     outstandingGhs:
       order.fxRate === null
         ? null
-        : sum(lines.map((l) => multiply(l.landedCost ?? '0', l.quantityOutstanding))),
+        : order.status === 'closed'
+          ? '0.00'
+          : sum(lines.map((l) => multiply(l.landedCost ?? '0', l.quantityOutstanding))),
+    writtenOffGhs:
+      order.status === 'closed' && order.fxRate !== null
+        ? sum(lines.map((l) => multiply(l.landedCost ?? '0', l.quantityOutstanding)))
+        : null,
     lines,
     receipts: [...receiptsByMoment.values()],
   };
@@ -1141,10 +1153,59 @@ export async function cancelPurchaseOrder(id: string): Promise<PurchaseOrderDeta
       throw ApiError.conflict('Stock has already been received against this order');
     }
     if (order.status === 'cancelled') throw ApiError.conflict('That order is already cancelled');
+    if (order.status === 'closed') {
+      throw ApiError.conflict('That order is closed — stock arrived against it');
+    }
 
     await tx
       .update(purchaseOrders)
       .set({ status: 'cancelled', updatedAt: new Date() })
+      .where(eq(purchaseOrders.id, id));
+  });
+
+  return getPurchaseOrder(id);
+}
+
+/** Short-close: some of it arrived, the rest never will. Part-delivered orders
+ *  only — if nothing arrived, that is a cancellation.
+ *
+ *  A supplier discontinuing a line mid-order is ordinary in importing, and
+ *  without this the order sits `partially_received` for good — the purchasing
+ *  officer keeps seeing stock that is not coming, the supplier's open-order
+ *  count never falls, and the outstanding value is wrong forever.
+ *
+ *  What arrived is untouched: the stock, its movements and the prices it set all
+ *  stand. Only the expectation of the remainder is written off, and the status
+ *  says so rather than pretending the order was cancelled or fully received.
+ */
+export async function closePurchaseOrder(id: string): Promise<PurchaseOrderDetail> {
+  await getDb().transaction(async (tx) => {
+    const [order] = await tx
+      .select()
+      .from(purchaseOrders)
+      .where(eq(purchaseOrders.id, id))
+      .for('update')
+      .limit(1);
+
+    if (!order) throw ApiError.notFound('Purchase order not found');
+
+    // Only a part-delivered order. Each status then means exactly one thing:
+    // cancelled is nothing arrived, closed is some arrived and the rest was
+    // written off, received is all of it came. An order with nothing against it
+    // is a cancellation however it is worded.
+    if (order.status === 'draft' || order.status === 'sent') {
+      throw ApiError.conflict('Nothing has arrived on that order — cancel it instead');
+    }
+    if (order.status === 'cancelled' || order.status === 'closed') {
+      throw ApiError.conflict(`That order is already ${order.status}`);
+    }
+    if (order.status === 'received') {
+      throw ApiError.conflict('Everything on that order arrived — there is nothing to write off');
+    }
+
+    await tx
+      .update(purchaseOrders)
+      .set({ status: 'closed', updatedAt: new Date() })
       .where(eq(purchaseOrders.id, id));
   });
 

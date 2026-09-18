@@ -20,7 +20,7 @@
 | Next.js frontend | **Not started** — repo is an empty initial commit |
 | API documentation | **Done** — OpenAPI 3.1 at `/openapi.json`, Swagger UI at `/docs` |
 
-**158 tests pass.** The spine of the demo now works end to end on the server: receive a purchase order at a new FX rate, watch the landed cost and suggested price move, then sell the part at the till and watch stock and the customer balance follow. What is missing is a face — nothing is wired to a screen yet.
+**165 tests pass.** The spine of the demo now works end to end on the server: receive a purchase order at a new FX rate, watch the landed cost and suggested price move, then sell the part at the till and watch stock and the customer balance follow. What is missing is a face — nothing is wired to a screen yet.
 
 ---
 
@@ -112,6 +112,7 @@ Every module is two files, and the split is strict. `routes.ts` holds the router
 | `PATCH /api/backoffice/purchase-orders/:id` | purchasing | Drafts only |
 | `POST /api/backoffice/purchase-orders/:id/send` | purchasing | Needs a rate and a line |
 | `POST /api/backoffice/purchase-orders/:id/cancel` | purchasing | Only before anything arrives |
+| `POST /api/backoffice/purchase-orders/:id/close` | purchasing | Short-close: write off what is not coming |
 
 Admin reaches everything.
 
@@ -175,7 +176,20 @@ some states".
 
 Once sent, the order is frozen. Its lines and its rate are what the supplier is
 working to, and changing them afterwards would rewrite the cost basis of stock
-already received against it. Cancelling is refused once anything has arrived.
+already received against it. A sent order with nothing received can still be
+cancelled; there is deliberately no way to recall one to draft, because the
+supplier is holding a document with that number on it and cancel-and-reissue
+leaves both sides able to see what was voided.
+
+**Short-close** handles the case that neither cancel nor receive covers: part of
+an order arrived and the rest never will, because the supplier discontinued the
+line. Without it the order sits `partially_received` for good — stock that is not
+coming keeps showing as expected, and the supplier never stops having an open
+order. What arrived is untouched; only the expectation of the remainder is
+written off, and `closed` is its own status because `cancelled` would claim
+nothing arrived and `received` would claim everything did. It applies only to a
+part-delivered order: if nothing came, that is a cancellation however it is
+worded, and each status then means exactly one thing.
 
 ### Receivables
 

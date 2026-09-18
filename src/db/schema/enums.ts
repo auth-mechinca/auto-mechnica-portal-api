@@ -7,6 +7,11 @@ export const poStatus = appSchema.enum('po_status', [
   'partially_received',
   'received',
   'cancelled',
+  /** Short-closed: some of the order arrived and the rest never will, so the
+   *  balance is written off deliberately. Distinct from `cancelled`, which means
+   *  nothing arrived, and from `received`, which means all of it did — calling a
+   *  short delivery either of those would misstate what happened. */
+  'closed',
 ]);
 
 /** Every change to an inventory balance is one of these — balances are never edited directly. */
