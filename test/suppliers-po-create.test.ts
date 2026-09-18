@@ -216,9 +216,10 @@ describe('cancelling', () => {
       status: 'draft',
     });
 
-    const cancelled = await cancelPurchaseOrder(draft.id);
+    const cancelled = await cancelPurchaseOrder(draft.id, { reason: 'Ordered by mistake' }, base.sellerId);
     assert.equal(cancelled.status, 'cancelled');
-    await assert.rejects(() => cancelPurchaseOrder(draft.id), /already cancelled/);
+    assert.equal(cancelled.resolution!.reason, 'Ordered by mistake');
+    await assert.rejects(() => cancelPurchaseOrder(draft.id, { reason: 'Ordered by mistake' }, base.sellerId), /already cancelled/);
   });
 
   it('refuses once stock has arrived', async () => {
@@ -236,7 +237,7 @@ describe('cancelling', () => {
       base.sellerId,
     );
 
-    await assert.rejects(() => cancelPurchaseOrder(order.id), /already been received/);
+    await assert.rejects(() => cancelPurchaseOrder(order.id, {}, base.sellerId), /already been received/);
   });
 });
 

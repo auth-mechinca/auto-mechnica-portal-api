@@ -20,7 +20,7 @@
 | Next.js frontend | **Not started** — repo is an empty initial commit |
 | API documentation | **Done** — OpenAPI 3.1 at `/openapi.json`, Swagger UI at `/docs` |
 
-**165 tests pass.** The spine of the demo now works end to end on the server: receive a purchase order at a new FX rate, watch the landed cost and suggested price move, then sell the part at the till and watch stock and the customer balance follow. What is missing is a face — nothing is wired to a screen yet.
+**166 tests pass.** The spine of the demo now works end to end on the server: receive a purchase order at a new FX rate, watch the landed cost and suggested price move, then sell the part at the till and watch stock and the customer balance follow. What is missing is a face — nothing is wired to a screen yet.
 
 ---
 
@@ -190,6 +190,16 @@ written off, and `closed` is its own status because `cancelled` would claim
 nothing arrived and `received` would claim everything did. It applies only to a
 part-delivered order: if nothing came, that is a cancellation however it is
 worded, and each status then means exactly one thing.
+
+Both outcomes record **why**. `purchase_orders` gained a resolution triple —
+`resolved_at`, `resolved_by`, `resolution_reason` — mirroring the shape `cheques`
+already uses for cleared and bounced, rather than a column set per outcome or a
+separate events table, which would be the audit log Section 8 excludes. The
+reason is required when short-closing, because that writes value off and somebody
+will ask about it later, and optional when cancelling, because an order nobody
+acted on often ends for no reason worth recording. Free text rather than an enum:
+nobody has yet seen the reasons a real purchasing officer writes, and a
+constrained list should come from reading them.
 
 ### Receivables
 

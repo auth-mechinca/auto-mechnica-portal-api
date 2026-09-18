@@ -85,20 +85,25 @@ describe('short-closing a purchase order', () => {
     assert.equal(before.status, 'partially_received');
     assert.equal(before.outstandingGhs, '3496.80', '12 x 291.40 still expected');
 
-    const closed = await closePurchaseOrder(id);
+    const closed = await closePurchaseOrder(id, { reason: 'Supplier discontinued the line' }, base.sellerId);
 
     assert.equal(closed.status, 'closed');
     assert.equal(closed.outstandingGhs, '0.00', 'nothing more is expected');
     assert.equal(closed.writtenOffGhs, '3496.80', 'and the write-off is visible');
     assert.equal(closed.receivedGhs, '3496.80', 'what arrived is untouched');
     assert.equal(closed.lines[0]!.quantityReceived, '12.000');
+
+    // Somebody will ask why 3,496.80 was written off. The answer is on the order.
+    assert.equal(closed.resolution!.reason, 'Supplier discontinued the line');
+    assert.equal(closed.resolution!.by, 'Ama Mensah');
+    assert.ok(closed.resolution!.at);
   });
 
   it('stops counting against the supplier as an open order', async () => {
     const id = await partiallyReceived();
     const open = (await getSupplier(supplierId)).openPurchaseOrders;
 
-    await closePurchaseOrder(id);
+    await closePurchaseOrder(id, { reason: 'Supplier discontinued the line' }, base.sellerId);
 
     assert.equal(
       (await getSupplier(supplierId)).openPurchaseOrders,
@@ -110,7 +115,7 @@ describe('short-closing a purchase order', () => {
   it('refuses to receive against it afterwards', async () => {
     const id = await partiallyReceived();
     const order = await getPurchaseOrder(id);
-    await closePurchaseOrder(id);
+    await closePurchaseOrder(id, { reason: 'Supplier discontinued the line' }, base.sellerId);
 
     await assert.rejects(
       () =>
@@ -125,8 +130,8 @@ describe('short-closing a purchase order', () => {
 
   it('cannot be cancelled after closing — stock did arrive', async () => {
     const id = await partiallyReceived();
-    await closePurchaseOrder(id);
-    await assert.rejects(() => cancelPurchaseOrder(id), /closed — stock arrived/);
+    await closePurchaseOrder(id, { reason: 'Supplier discontinued the line' }, base.sellerId);
+    await assert.rejects(() => cancelPurchaseOrder(id, {}, base.sellerId), /closed — stock arrived/);
   });
 
   it('is refused when nothing arrived — that is a cancellation', async () => {
@@ -136,7 +141,7 @@ describe('short-closing a purchase order', () => {
       lines: [],
       status: 'draft',
     });
-    await assert.rejects(() => closePurchaseOrder(draft.id), /cancel it instead/);
+    await assert.rejects(() => closePurchaseOrder(draft.id, { reason: 'Not needed' }, base.sellerId), /cancel it instead/);
 
     const sent = await createPurchaseOrder({
       supplierId,
@@ -146,7 +151,7 @@ describe('short-closing a purchase order', () => {
       status: 'sent',
     });
     await assert.rejects(
-      () => closePurchaseOrder(sent.id),
+      () => closePurchaseOrder(sent.id, { reason: 'Not needed' }, base.sellerId),
       /Nothing has arrived/,
       'writing off an order that delivered nothing is just a cancellation',
     );
@@ -166,7 +171,19 @@ describe('short-closing a purchase order', () => {
       base.sellerId,
     );
 
-    await assert.rejects(() => closePurchaseOrder(order.id), /nothing to write off/);
+    await assert.rejects(() => closePurchaseOrder(order.id, { reason: 'Nothing left' }, base.sellerId), /nothing to write off/);
+  });
+
+  it('will not write value off without saying why', async () => {
+    const id = await partiallyReceived();
+
+    const res = await request(server)
+      .post(`/api/backoffice/purchase-orders/${id}/close`)
+      .set({ Authorization: `Bearer ${token}` })
+      .send({});
+
+    assert.equal(res.status, 400, 'a write-off has to carry a reason');
+    assert.equal(res.body.error.code, 'VALIDATION_ERROR');
   });
 
   it('closes over HTTP and can be filtered for', async () => {
@@ -174,10 +191,12 @@ describe('short-closing a purchase order', () => {
 
     const res = await request(server)
       .post(`/api/backoffice/purchase-orders/${id}/close`)
-      .set({ Authorization: `Bearer ${token}` });
+      .set({ Authorization: `Bearer ${token}` })
+      .send({ reason: 'Supplier discontinued SPK-NGK-4T' });
 
     assert.equal(res.status, 200);
     assert.equal(res.body.status, 'closed');
+    assert.equal(res.body.resolution.reason, 'Supplier discontinued SPK-NGK-4T');
 
     const list = await request(server)
       .get('/api/backoffice/purchase-orders?status=closed')

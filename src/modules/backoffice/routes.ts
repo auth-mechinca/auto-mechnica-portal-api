@@ -58,18 +58,20 @@ backofficeRouter.post(
 backofficeRouter.post(
   '/purchase-orders/:id/cancel',
   validateParams(service.purchaseOrderIdParam),
-  asyncHandler(async (_req, res) => {
+  validateBody(service.cancelPurchaseOrderInput),
+  asyncHandler(async (req, res) => {
     const { id } = res.locals.params as service.PurchaseOrderIdParam;
-    res.json(await service.cancelPurchaseOrder(id));
+    res.json(await service.cancelPurchaseOrder(id, req.body, currentUser(req).sub));
   }),
 );
 
 backofficeRouter.post(
   '/purchase-orders/:id/close',
   validateParams(service.purchaseOrderIdParam),
-  asyncHandler(async (_req, res) => {
+  validateBody(service.closePurchaseOrderInput),
+  asyncHandler(async (req, res) => {
     const { id } = res.locals.params as service.PurchaseOrderIdParam;
-    res.json(await service.closePurchaseOrder(id));
+    res.json(await service.closePurchaseOrder(id, req.body, currentUser(req).sub));
   }),
 );
 

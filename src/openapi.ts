@@ -144,6 +144,8 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         CreateSupplierRequest: jsonSchema(backofficeService.createSupplierInput, 'input'),
         UpdateSupplierRequest: jsonSchema(backofficeService.updateSupplierInput, 'input'),
         CreatePurchaseOrderRequest: jsonSchema(backofficeService.createPurchaseOrderInput, 'input'),
+        ClosePurchaseOrderRequest: jsonSchema(backofficeService.closePurchaseOrderInput, 'input'),
+        CancelPurchaseOrderRequest: jsonSchema(backofficeService.cancelPurchaseOrderInput, 'input'),
         UpdatePurchaseOrderRequest: jsonSchema(backofficeService.updatePurchaseOrderInput, 'input'),
         UpdateSettingsRequest: jsonSchema(backofficeService.updateSettingsInput, 'input'),
       },
@@ -637,8 +639,9 @@ export function buildOpenApiDocument(): Record<string, unknown> {
           tags: ['Purchase Orders'],
           summary: 'Cancel a purchase order',
           description:
-            'Only before anything arrives. Stock already received cannot be un-received, and the prices it set are standing against it.',
+            'Only before anything arrives. Stock already received cannot be un-received, and the prices it set are standing against it. A `reason` is optional here — an order nobody acted on often ends for no reason worth recording.',
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          requestBody: { required: true, content: json(ref('CancelPurchaseOrderRequest')) },
           responses: {
             200: { description: 'Cancelled', content: json(ref('PurchaseOrderDetail')) },
             404: errorResponse('Purchase order not found'),
@@ -668,8 +671,13 @@ export function buildOpenApiDocument(): Record<string, unknown> {
             '',
             'Only for `partially_received`. If nothing arrived, that is a cancellation',
             'however it is worded — so each status means exactly one thing.',
+            '',
+            'A `reason` is required, because this writes value off and somebody will ask',
+            'why months later. It is recorded on the order with who closed it and when,',
+            'and comes back as `resolution`.',
           ].join('\n'),
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          requestBody: { required: true, content: json(ref('ClosePurchaseOrderRequest')) },
           responses: {
             200: { description: 'Closed', content: json(ref('PurchaseOrderDetail')) },
             404: errorResponse('Purchase order not found'),

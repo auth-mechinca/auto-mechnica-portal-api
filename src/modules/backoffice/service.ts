@@ -43,6 +43,19 @@ export const listPurchaseOrdersQuery = z.object({
 });
 export type ListPurchaseOrdersQuery = z.infer<typeof listPurchaseOrdersQuery>;
 
+/** Required when short-closing, because that writes value off and somebody will
+ *  ask why months later. Optional when cancelling: an order nobody acted on
+ *  often ends for no reason worth recording. */
+export const closePurchaseOrderInput = z.object({
+  reason: z.string().trim().min(3).max(500),
+});
+export type ClosePurchaseOrderInput = z.infer<typeof closePurchaseOrderInput>;
+
+export const cancelPurchaseOrderInput = z.object({
+  reason: z.string().trim().min(3).max(500).optional(),
+});
+export type CancelPurchaseOrderInput = z.infer<typeof cancelPurchaseOrderInput>;
+
 export const receiveStockInput = z.object({
   lines: z
     .array(
@@ -85,6 +98,15 @@ export const purchaseOrderDetail = purchaseOrderSummary.extend({
   /** Value of what was ordered and never arrived, on a short-closed order.
    *  Null on every other status, where nothing has been written off. */
   writtenOffGhs: z.string().nullable(),
+  /** Why the order ended early, and who ended it. Null unless it was cancelled
+   *  or short-closed. */
+  resolution: z
+    .object({
+      at: z.string(),
+      by: z.string().nullable(),
+      reason: z.string().nullable(),
+    })
+    .nullable(),
   lines: z.array(
     z.object({
       id: z.string().uuid(),
@@ -203,9 +225,13 @@ export async function getPurchaseOrder(id: string): Promise<PurchaseOrderDetail>
       fxRate: purchaseOrders.fxRate,
       supplierId: suppliers.id,
       supplierName: suppliers.name,
+      resolvedAt: purchaseOrders.resolvedAt,
+      resolutionReason: purchaseOrders.resolutionReason,
+      resolvedByName: users.fullName,
     })
     .from(purchaseOrders)
     .innerJoin(suppliers, eq(suppliers.id, purchaseOrders.supplierId))
+    .leftJoin(users, eq(users.id, purchaseOrders.resolvedBy))
     .where(eq(purchaseOrders.id, id))
     .limit(1);
 
@@ -322,6 +348,13 @@ export async function getPurchaseOrder(id: string): Promise<PurchaseOrderDetail>
       order.status === 'closed' && order.fxRate !== null
         ? sum(lines.map((l) => multiply(l.landedCost ?? '0', l.quantityOutstanding)))
         : null,
+    resolution: order.resolvedAt
+      ? {
+          at: order.resolvedAt.toISOString(),
+          by: order.resolvedByName,
+          reason: order.resolutionReason,
+        }
+      : null,
     lines,
     receipts: [...receiptsByMoment.values()],
   };
@@ -1136,7 +1169,11 @@ export async function sendPurchaseOrder(id: string): Promise<PurchaseOrderDetail
   return getPurchaseOrder(id);
 }
 
-export async function cancelPurchaseOrder(id: string): Promise<PurchaseOrderDetail> {
+export async function cancelPurchaseOrder(
+  id: string,
+  input: CancelPurchaseOrderInput,
+  resolvedBy: string,
+): Promise<PurchaseOrderDetail> {
   await getDb().transaction(async (tx) => {
     const [order] = await tx
       .select()
@@ -1159,7 +1196,13 @@ export async function cancelPurchaseOrder(id: string): Promise<PurchaseOrderDeta
 
     await tx
       .update(purchaseOrders)
-      .set({ status: 'cancelled', updatedAt: new Date() })
+      .set({
+        status: 'cancelled',
+        resolvedAt: new Date(),
+        resolvedBy,
+        resolutionReason: input.reason ?? null,
+        updatedAt: new Date(),
+      })
       .where(eq(purchaseOrders.id, id));
   });
 
@@ -1178,7 +1221,11 @@ export async function cancelPurchaseOrder(id: string): Promise<PurchaseOrderDeta
  *  stand. Only the expectation of the remainder is written off, and the status
  *  says so rather than pretending the order was cancelled or fully received.
  */
-export async function closePurchaseOrder(id: string): Promise<PurchaseOrderDetail> {
+export async function closePurchaseOrder(
+  id: string,
+  input: ClosePurchaseOrderInput,
+  resolvedBy: string,
+): Promise<PurchaseOrderDetail> {
   await getDb().transaction(async (tx) => {
     const [order] = await tx
       .select()
@@ -1205,7 +1252,13 @@ export async function closePurchaseOrder(id: string): Promise<PurchaseOrderDetai
 
     await tx
       .update(purchaseOrders)
-      .set({ status: 'closed', updatedAt: new Date() })
+      .set({
+        status: 'closed',
+        resolvedAt: new Date(),
+        resolvedBy,
+        resolutionReason: input.reason,
+        updatedAt: new Date(),
+      })
       .where(eq(purchaseOrders.id, id));
   });
 

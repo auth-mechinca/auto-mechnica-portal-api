@@ -50,6 +50,13 @@
       "when": 1789710177535,
       "tag": "0006_short_close_purchase_order",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1789712496527,
+      "tag": "0007_purchase_order_resolution",
+      "breakpoints": true
     }
   ]
 }
