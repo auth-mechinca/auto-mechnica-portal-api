@@ -1,5 +1,5 @@
 import type { RequestHandler } from 'express';
-import { isRevoked } from '../db/revocations.js';
+import { loadSession } from '../db/session.js';
 import { ApiError } from '../lib/http.js';
 import { verifyToken, type AuthUser, type Role } from '../lib/token.js';
 
@@ -16,20 +16,28 @@ export const requireAuth: RequestHandler = (req, _res, next) => {
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) return next(ApiError.unauthorized());
 
-  let user: AuthUser;
+  let claims: AuthUser;
   try {
-    user = verifyToken(header.slice('Bearer '.length));
+    claims = verifyToken(header.slice('Bearer '.length));
   } catch {
     return next(ApiError.unauthorized('Invalid or expired token'));
   }
 
-  // A valid signature is not the same as a live session. Checked on every
-  // request, because that is the only point at which a signed-out token can be
-  // stopped.
-  isRevoked(user.jti)
-    .then((revoked) => {
+  // A valid signature is not the same as a live session, so the database is
+  // asked on every request. It answers three things at once: has this token been
+  // signed out, does the account still exist and is it still switched on, and —
+  // the one that matters most — what is this person's role *now*.
+  loadSession(claims.sub, claims.jti)
+    .then(({ revoked, user }) => {
       if (revoked) return next(ApiError.unauthorized('This session has been signed out'));
-      req.user = user;
+      if (!user) return next(ApiError.unauthorized('This account no longer exists'));
+      if (!user.isActive) return next(ApiError.unauthorized('This account has been deactivated'));
+
+      // The role comes from the row, never from the claim. An admin who changes
+      // somebody's role has changed it by their next request, which is what the
+      // Users screen says happens — a token signed an hour ago cannot carry the
+      // old permissions past this point.
+      req.user = { ...claims, email: user.email, role: user.role };
       next();
     })
     .catch(next);

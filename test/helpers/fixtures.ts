@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm';
 import type { Db } from '../../src/db/client.js';
 import { hashPassword } from '../../src/lib/password.js';
+import type { Role } from '../../src/lib/token.js';
 import {
   brands,
   customers,
@@ -15,18 +16,36 @@ import {
   users,
 } from '../../src/db/schema/index.js';
 
-/** One location, one member of staff, one customer, and the two shop settings.
- *  Everything both suites need before they add parts of their own — kept
- *  separate because parts carry unique SKUs and two fixtures inventing the same
- *  one would collide. */
+/** One location, one customer, the two shop settings, and one member of staff
+ *  per role. Everything both suites need before they add parts of their own —
+ *  kept separate because parts carry unique SKUs and two fixtures inventing the
+ *  same one would collide.
+ *
+ *  Four users rather than one because `requireAuth` reads the role from the user
+ *  row and ignores the claim in the token. A test can no longer sign itself a
+ *  purchasing token for the sales account: it has to authenticate as somebody
+ *  who actually holds that role, which is the same rule the shop runs under. */
 export async function baseFixture(db: Db) {
   const [location] = await db.insert(locations).values({ name: 'Main Shop' }).returning();
   const passwordHash = await hashPassword('demo1234');
 
-  const [seller] = await db
+  const inserted = await db
     .insert(users)
-    .values({ email: 'sales@test', fullName: 'Ama Mensah', role: 'sales', passwordHash })
+    .values(
+      (
+        [
+          ['sales', 'Ama Mensah'],
+          ['purchasing', 'Kofi Asante'],
+          ['accountant', 'Adjoa Boateng'],
+          ['admin', 'Yaw Owusu'],
+        ] as const
+      ).map(([role, fullName]) => ({ email: `${role}@test`, fullName, role, passwordHash })),
+    )
     .returning();
+
+  const staff = Object.fromEntries(
+    inserted.map((row) => [row.role, { id: row.id, email: row.email }]),
+  ) as Record<Role, { id: string; email: string }>;
 
   const [customer] = await db
     .insert(customers)
@@ -38,7 +57,13 @@ export async function baseFixture(db: Db) {
     { key: 'default_payment_terms_days', value: '30' },
   ]);
 
-  return { locationId: location!.id, sellerId: seller!.id, customerId: customer!.id };
+  return {
+    locationId: location!.id,
+    /** The sales account. Still called this because it is who records a sale. */
+    sellerId: staff.sales.id,
+    customerId: customer!.id,
+    staff,
+  };
 }
 
 /** A shop with stock on the shelf, for the POS tests. */

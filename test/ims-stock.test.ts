@@ -5,6 +5,7 @@ import request from 'supertest';
 import type { Server } from 'node:http';
 import { createTestDb } from './helpers/db.js';
 import { baseFixture, purchaseOrderFixture } from './helpers/fixtures.js';
+import { tokenFor } from './helpers/auth.js';
 import { createApp } from '../src/app.js';
 import { signToken } from '../src/lib/token.js';
 import type { Db } from '../src/db/client.js';
@@ -32,7 +33,7 @@ before(async () => {
   base = await baseFixture(db);
   po = await purchaseOrderFixture(db);
   server = createApp().listen(0);
-  token = signToken({ sub: base.sellerId, email: 'kofi@demo', role: 'purchasing' });
+  token = tokenFor(base, 'purchasing');
 
   // Reorder points, so "low stock" means something: the fixture parts default to
   // zero, and everything at zero is trivially at its reorder point.
@@ -197,7 +198,7 @@ describe('over HTTP', () => {
   });
 
   it('keeps Sales out of the catalogue', async () => {
-    const sales = signToken({ sub: base.sellerId, email: 'ama@demo', role: 'sales' });
+    const sales = tokenFor(base, 'sales');
     const res = await request(server)
       .get('/api/ims/parts?status=active')
       .set('Authorization', `Bearer ${sales}`);

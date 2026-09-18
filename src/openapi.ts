@@ -7,6 +7,7 @@ import * as categoriesService from './modules/categories/service.js';
 import * as brandsService from './modules/brands/service.js';
 import * as posService from './modules/pos/service.js';
 import * as settingsService from './modules/settings/service.js';
+import * as usersService from './modules/users/service.js';
 
 /** The OpenAPI document, generated from the very zod schemas the API validates
  *  and returns. Nothing here is hand-copied from a handler, so the published
@@ -125,6 +126,11 @@ export function buildOpenApiDocument(): Record<string, unknown> {
           'Section 6.2. Requires the **purchasing** or **admin** role. This is where a USD purchase cost becomes a Cedi price at the till.',
       },
       {
+        name: 'Users',
+        description:
+          'Staff accounts and their roles, **admin** only. A user has exactly one role — there are no custom permission sets in this build. Users are never deleted: deactivating stops sign-in while keeping their name on the sales, receipts and adjustments they made.',
+      },
+      {
         name: 'Settings',
         description:
           'Shop-wide settings, **admin** only. The margin here prices the whole catalogue, which is why purchasing cannot reach it.',
@@ -138,7 +144,7 @@ export function buildOpenApiDocument(): Record<string, unknown> {
           scheme: 'bearer',
           bearerFormat: 'JWT',
           description:
-            'Obtain a token from `POST /api/auth/login`. It carries the role claim and expires in 8 hours. `POST /api/auth/logout` revokes it before then; every request checks that list.',
+            'Obtain a token from `POST /api/auth/login`. It expires in an hour by default (`JWT_EXPIRES_IN`). `POST /api/auth/logout` revokes it before then, and every request checks that list. The role claim inside the token is **not** what authorises anything: the role is re-read from the user row on every request, so an admin changing somebody\'s role or switching their account off takes effect on that person\'s very next request.',
         },
       },
       schemas: {
@@ -185,6 +191,10 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         UpdateBrandRequest: jsonSchema(brandsService.updateBrandInput, 'input'),
         UpdatePurchaseOrderRequest: jsonSchema(backofficeService.updatePurchaseOrderInput, 'input'),
         UpdateSettingsRequest: jsonSchema(settingsService.updateSettingsInput, 'input'),
+        StaffUser: jsonSchema(usersService.userRow, 'output'),
+        CreatedStaffUser: jsonSchema(usersService.createdUser, 'output'),
+        CreateStaffUserRequest: jsonSchema(usersService.createUserInput, 'input'),
+        UpdateStaffUserRequest: jsonSchema(usersService.updateUserInput, 'input'),
       },
     },
     security: [{ bearerAuth: [] }],
@@ -526,6 +536,10 @@ export function buildOpenApiDocument(): Record<string, unknown> {
             'account until it is applied. Allocating oldest-first is the convention, not',
             'a rule — the accountant decides. An allocation may not exceed what the',
             'invoice still owes, nor the payment itself.',
+            '',
+            '`payment` is the same union, spelled the same way, as the payment on a sale:',
+            'a till taking a cheque and an accountant recording one later are the same',
+            'event arriving through two doors, so one client-side mapper serves both.',
           ].join('\n'),
           requestBody: { required: true, content: json(ref('RecordPaymentRequest')) },
           responses: {
@@ -643,6 +657,85 @@ export function buildOpenApiDocument(): Record<string, unknown> {
             404: errorResponse('That part has no price yet'),
             409: errorResponse('That part has no cost recorded yet'),
             ...AUTH_ERRORS,
+          },
+        },
+      },
+
+      '/api/users': {
+        get: {
+          tags: ['Users'],
+          summary: 'Everyone on the staff',
+          description:
+            'Active and inactive together, ordered by name — the screen shows both in one table with a status column rather than behind a filter. A password hash is never returned by any endpoint here.',
+          responses: {
+            200: { description: 'Every user', content: json({ type: 'array', items: ref('StaffUser') }) },
+            ...AUTH_ERRORS,
+          },
+        },
+        post: {
+          tags: ['Users'],
+          summary: 'Add a user',
+          description: [
+            'The password is **generated, not chosen**, and returned exactly once in this',
+            'response. Only the hash is stored, so this is the sole moment the plaintext',
+            'exists anywhere — an admin who loses it has to issue a new account rather',
+            'than look it up. There is no change-password endpoint in this build.',
+            '',
+            'The generated password avoids characters that are ambiguous when read aloud',
+            'or written down: no `O`/`0`, no `I`/`l`/`1`.',
+          ].join('\n'),
+          requestBody: { required: true, content: json(ref('CreateStaffUserRequest')) },
+          responses: {
+            201: {
+              description: 'Created, with the one and only sight of the password',
+              content: json(ref('CreatedStaffUser')),
+            },
+            409: errorResponse('That email address already has an account'),
+            ...AUTH_ERRORS,
+          },
+        },
+      },
+
+      '/api/users/{id}': {
+        get: {
+          tags: ['Users'],
+          summary: 'One user',
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: {
+            200: { description: 'The user', content: json(ref('StaffUser')) },
+            404: errorResponse('No such user'),
+            ...AUTH_ERRORS,
+          },
+        },
+        patch: {
+          tags: ['Users'],
+          summary: 'Rename, reassign or deactivate',
+          description: [
+            'Send the fields that changed; at least one is required.',
+            '',
+            'A **role change takes effect on that person\'s next request**, not when their',
+            'token expires: the role is read from the user row on every request and the',
+            'claim inside the token is ignored. The same is true of `isActive: false` —',
+            'an open session stops working immediately rather than running on until the',
+            'token runs out.',
+            '',
+            'Which is why you cannot deactivate your own account or move yourself off',
+            'admin: either would end your own session on the next request and, if you',
+            'were the only admin, leave nobody able to undo it.',
+            '',
+            'There is no delete. Deactivating keeps their name on the sales, receipts and',
+            'adjustments they made.',
+          ].join('\n'),
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          requestBody: { required: true, content: json(ref('UpdateStaffUserRequest')) },
+          responses: {
+            200: { description: 'Updated', content: json(ref('StaffUser')) },
+            404: errorResponse('No such user'),
+            409: errorResponse('That email address already has an account'),
+            ...AUTH_ERRORS,
+            400: errorResponse(
+              'Nothing to change, or you tried to deactivate yourself or move yourself off admin',
+            ),
           },
         },
       },

@@ -52,6 +52,11 @@ export async function login({
 
   if (!user || !ok || !user.isActive) throw ApiError.unauthorized('Invalid email or password');
 
+  // Stamped only on success, so the column means "last got in" rather than
+  // "last tried". The Users screen shows it, and an account that has never
+  // signed in shows nothing rather than a misleading date.
+  await getDb().update(users).set({ lastSignInAt: new Date() }).where(eq(users.id, user.id));
+
   return {
     token: signToken({ sub: user.id, email: user.email, role: user.role }),
     user: toPublicUser(user),

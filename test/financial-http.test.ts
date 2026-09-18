@@ -5,6 +5,7 @@ import request from 'supertest';
 import type { Server } from 'node:http';
 import { createTestDb } from './helpers/db.js';
 import { baseFixture } from './helpers/fixtures.js';
+import { tokenFor } from './helpers/auth.js';
 import { createApp } from '../src/app.js';
 import { signToken } from '../src/lib/token.js';
 import type { Db } from '../src/db/client.js';
@@ -21,7 +22,7 @@ before(async () => {
   ({ db, close } = await createTestDb());
   base = await baseFixture(db);
   server = createApp().listen(0);
-  token = signToken({ sub: base.sellerId, email: 'efua@demo', role: 'accountant' });
+  token = tokenFor(base, 'accountant');
 
   const [invoice] = await db
     .insert(salesInvoices)
@@ -73,7 +74,7 @@ describe('financial core over HTTP', () => {
         customerId: base.customerId,
         amount: '2000.00',
         paymentDate: '2026-09-03',
-        method: { kind: 'cheque', chequeNumber: '004821', bankName: 'GCB Bank' },
+        payment: { method: 'cheque', chequeNumber: '004821', bankName: 'GCB Bank' },
         allocations: [{ invoiceId, amount: '2000.00' }],
       });
 
@@ -123,7 +124,7 @@ describe('financial core over HTTP', () => {
         customerId: other!.id,
         amount: '100.00',
         paymentDate: '2026-09-15',
-        method: { kind: 'cash' },
+        payment: { method: 'cash' },
         allocations: [{ invoiceId, amount: '100.00' }],
       });
 
@@ -133,7 +134,7 @@ describe('financial core over HTTP', () => {
 
   it('keeps Sales and Purchasing out', async () => {
     for (const role of ['sales', 'purchasing'] as const) {
-      const other = signToken({ sub: base.sellerId, email: `${role}@demo`, role });
+      const other = tokenFor(base, role);
       const res = await request(server)
         .get('/api/financial/customers')
         .set('Authorization', `Bearer ${other}`);
@@ -142,7 +143,7 @@ describe('financial core over HTTP', () => {
   });
 
   it('lets an admin in', async () => {
-    const admin = signToken({ sub: base.sellerId, email: 'admin@demo', role: 'admin' });
+    const admin = tokenFor(base, 'admin');
     const res = await request(server)
       .get('/api/financial/customers')
       .set('Authorization', `Bearer ${admin}`);

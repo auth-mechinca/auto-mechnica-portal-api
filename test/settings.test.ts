@@ -5,6 +5,7 @@ import request from 'supertest';
 import type { Server } from 'node:http';
 import { createTestDb } from './helpers/db.js';
 import { baseFixture } from './helpers/fixtures.js';
+import { authAs } from './helpers/auth.js';
 import { createApp } from '../src/app.js';
 import { signToken } from '../src/lib/token.js';
 import type { Db } from '../src/db/client.js';
@@ -33,9 +34,7 @@ after(async () => {
   await close();
 });
 
-const as = (role: (typeof ROLES)[number]) => ({
-  Authorization: `Bearer ${signToken({ sub: base.sellerId, email: `${role}@demo`, role })}`,
-});
+const as = (role: (typeof ROLES)[number]) => authAs(base, role);
 
 describe('reading settings', () => {
   it('returns what the screen draws', async () => {

@@ -5,6 +5,7 @@ import request from 'supertest';
 import type { Server } from 'node:http';
 import { createTestDb } from './helpers/db.js';
 import { baseFixture } from './helpers/fixtures.js';
+import { tokenFor } from './helpers/auth.js';
 import { createApp } from '../src/app.js';
 import { signToken } from '../src/lib/token.js';
 import type { Db } from '../src/db/client.js';
@@ -28,7 +29,7 @@ before(async () => {
   ({ db, close } = await createTestDb());
   base = await baseFixture(db);
   server = createApp().listen(0);
-  token = signToken({ sub: base.sellerId, email: 'kofi@demo', role: 'purchasing' });
+  token = tokenFor(base, 'purchasing');
 });
 
 after(async () => {
@@ -150,7 +151,7 @@ describe('over HTTP', () => {
   });
 
   it('keeps Sales out', async () => {
-    const sales = signToken({ sub: base.sellerId, email: 'ama@demo', role: 'sales' });
+    const sales = tokenFor(base, 'sales');
     const res = await request(server)
       .get('/api/categories')
       .set('Authorization', `Bearer ${sales}`);

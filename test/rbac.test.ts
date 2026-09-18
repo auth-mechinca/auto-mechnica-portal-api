@@ -6,20 +6,36 @@ import type { Server } from 'node:http';
 import { createApp } from '../src/app.js';
 import { createTestDb } from './helpers/db.js';
 import { signToken, type Role } from '../src/lib/token.js';
+import { hashPassword } from '../src/lib/password.js';
+import { users } from '../src/db/schema/index.js';
 
 /** Section 2 of the demo scope promises that a restricted role is stopped by the
  *  API, not by a hidden nav item. These tests are that promise, asserted. */
 
 const ID = '11111111-1111-4111-8111-111111111111';
-const token = (role: Role) => signToken({ sub: ID, email: `${role}@demo`, role });
 
 let server: Server;
 let close: () => Promise<void>;
+/** A real row per role. `requireAuth` reads the role from the database rather
+ *  than from the claim, so a token for an account that does not exist is refused
+ *  before any role gate is reached — which is the point, but it means these
+ *  tests need real people rather than an invented id. */
+const tokens = {} as Record<Role, string>;
+const token = (role: Role) => tokens[role];
 
-// A database is needed even though no test here reads one: requireAuth checks
-// the token against the revocation list on every request.
 before(async () => {
-  ({ close } = await createTestDb());
+  const { db, close: closeDb } = await createTestDb();
+  close = closeDb;
+
+  const passwordHash = await hashPassword('demo1234');
+  for (const role of ['sales', 'purchasing', 'accountant', 'admin'] as const) {
+    const [row] = await db
+      .insert(users)
+      .values({ email: `${role}@rbac`, fullName: role, role, passwordHash })
+      .returning();
+    tokens[role] = signToken({ sub: row!.id, email: row!.email, role });
+  }
+
   server = createApp().listen(0);
 });
 after(async () => {
@@ -82,6 +98,13 @@ describe('RBAC', () => {
     const bogus = jwt.sign({ sub: ID, email: 'x@y', role: 'superuser' }, process.env.JWT_SECRET!);
     const res = await request(server).get('/api/backoffice/x').set('Authorization', `Bearer ${bogus}`);
     assert.equal(res.status, 401);
+  });
+
+  it('refuses a correctly signed token for an account that does not exist', async () => {
+    const orphan = signToken({ sub: ID, email: 'ghost@demo', role: 'admin' });
+    const res = await request(server).get('/api/backoffice/x').set('Authorization', `Bearer ${orphan}`);
+
+    assert.equal(res.status, 401, 'the role is read from the row, and there is no row');
   });
 
   it('ignores a role passed in the request body', async () => {
