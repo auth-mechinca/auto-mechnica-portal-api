@@ -264,7 +264,7 @@ disagreeing. Run it after `db:reset` for a clean history; that is the normal cas
 ## Tests
 
 ```bash
-npm test        # 231 tests
+npm test        # 251 tests
 npm run typecheck
 ```
 
@@ -300,15 +300,33 @@ constraint is genuinely missing.
 | `test/money.test.ts` | GHS returned as exact strings, FX scale, and landed cost = USD x rate |
 | `test/constraints.test.ts` | Duplicate SKU, dangling FK, duplicate balance per part/location |
 
-Two things about the runner, both deliberate:
+Three things about the runner, all deliberate:
 
 - `--test-concurrency=1`. Each file starts its own in-process Postgres; running
   several at once is slower and less reliable.
 - Database-backed suites are kept in separate files rather than grouped into one.
-  A single file holding all three database suites deadlocks `node:test` before it
+  A single file holding several database suites deadlocks `node:test` before it
   runs anything — the module registers fully, then nothing executes. Splitting
   them also gives each suite a clean database, so the tests do not depend on each
   other's leftover rows.
+- **`test/helpers/fixtures.ts` stays light on imports.** It is imported by every
+  database-backed file, so whatever it pulls in is loaded once per file in the
+  suite. Adding `signToken` to it — and with it `jsonwebtoken` and the config
+  schema — was enough to start deadlocking an unrelated file partway through a
+  full run: `pos-sale.test.ts` would hang to the timeout while passing in 3.5
+  seconds on its own, and which file died moved about as files were added or
+  removed. Token helpers live in `test/helpers/auth.ts` for that reason, so only
+  the files that make HTTP requests pay for them.
+
+  The failure is timing-sensitive rather than logical: adding a `console.error`
+  to the fixture made it disappear. If a file starts hanging with no output after
+  a change here, look at what the helpers import before looking at the test.
+
+The bcrypt work factor drops to 4 under `NODE_ENV=test` (`src/lib/password.ts`),
+which takes roughly twenty seconds off a full run — at cost 12 the fixed
+`DUMMY_HASH` alone is about 250ms per file, and nothing in the suite asserts that
+bcrypt is slow. The floor is unconditional outside tests, so setting
+`BCRYPT_COST` on a deployment does nothing.
 
 ## Known advisory
 

@@ -51,15 +51,18 @@ export const recordPaymentInput = z.object({
   customerId: z.string().uuid(),
   amount,
   paymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  method: z.discriminatedUnion('kind', [
-    z.object({ kind: z.literal('cash') }),
+  /** The same union, spelled the same way, as the payment on a sale. A till
+   *  taking a cheque and an accountant recording one later are the same event
+   *  arriving through two doors, so one mapper should serve both. */
+  payment: z.discriminatedUnion('method', [
+    z.object({ method: z.literal('cash') }),
     z.object({
-      kind: z.literal('cheque'),
+      method: z.literal('cheque'),
       chequeNumber: z.string().trim().min(1).max(50),
       bankName: z.string().trim().min(1).max(100).optional(),
     }),
     z.object({
-      kind: z.literal('momo'),
+      method: z.literal('momo'),
       network: z.enum(['mtn', 'telecel', 'airteltigo']),
       transactionId: z.string().trim().min(1).max(100),
       phoneNumber: z.string().trim().min(1).max(30),
@@ -514,13 +517,13 @@ export async function recordPayment(
 
     // Cash and MoMo are money in hand. A cheque is a promise, and stays pending
     // until somebody clears it in the queue.
-    const status = input.method.kind === 'cheque' ? 'pending' : 'cleared';
+    const status = input.payment.method === 'cheque' ? 'pending' : 'cleared';
 
     const [payment] = await tx
       .insert(payments)
       .values({
         customerId: input.customerId,
-        method: input.method.kind,
+        method: input.payment.method,
         amount: input.amount,
         status,
         paymentDate: input.paymentDate,
@@ -528,20 +531,20 @@ export async function recordPayment(
       })
       .returning();
 
-    if (input.method.kind === 'cheque') {
+    if (input.payment.method === 'cheque') {
       await tx.insert(cheques).values({
         paymentId: payment!.id,
-        chequeNumber: input.method.chequeNumber,
-        bankName: input.method.bankName ?? null,
+        chequeNumber: input.payment.chequeNumber,
+        bankName: input.payment.bankName ?? null,
       });
     }
 
-    if (input.method.kind === 'momo') {
+    if (input.payment.method === 'momo') {
       await tx.insert(momoTransactions).values({
         paymentId: payment!.id,
-        network: input.method.network,
-        transactionId: input.method.transactionId,
-        phoneNumber: input.method.phoneNumber,
+        network: input.payment.network,
+        transactionId: input.payment.transactionId,
+        phoneNumber: input.payment.phoneNumber,
       });
     }
 

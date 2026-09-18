@@ -6,6 +6,7 @@ import type { Server } from 'node:http';
 import { eq } from 'drizzle-orm';
 import { createTestDb } from './helpers/db.js';
 import { shopFixture } from './helpers/fixtures.js';
+import { tokenFor } from './helpers/auth.js';
 import { createApp } from '../src/app.js';
 import { signToken } from '../src/lib/token.js';
 import type { Db } from '../src/db/client.js';
@@ -130,7 +131,7 @@ describe('POS over HTTP', () => {
   });
 
   it('refuses an accountant at the till', async () => {
-    const accountant = signToken({ sub: shop.sellerId, email: 'a@demo', role: 'accountant' });
+    const accountant = tokenFor(shop, 'accountant');
     const res = await request(server)
       .get('/api/pos/parts?q=brake')
       .set('Authorization', `Bearer ${accountant}`);

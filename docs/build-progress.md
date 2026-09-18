@@ -18,10 +18,11 @@
 | IMS | **Done** — catalogue, part detail with its stock ledger, adjustments, low stock |
 | Financial Core | **Done** — customer accounts with ageing, account detail, recording payments, the cheque queue |
 | Settings | **Done** — its own admin-only module: the margin and payment terms, plus the currency and location the screen reports |
+| Users and roles | **Done** — admin-only module: add staff, assign a role, deactivate. A role change lands on that person's next request |
 | Next.js frontend | **Not started** — repo is an empty initial commit |
 | API documentation | **Done** — OpenAPI 3.1 at `/openapi.json`, Swagger UI at `/docs` |
 
-**231 tests pass.** The spine of the demo now works end to end on the server: receive a purchase order at a new FX rate, watch the landed cost and suggested price move, then sell the part at the till and watch stock and the customer balance follow. What is missing is a face — nothing is wired to a screen yet.
+**251 tests pass.** The spine of the demo now works end to end on the server: receive a purchase order at a new FX rate, watch the landed cost and suggested price move, then sell the part at the till and watch stock and the customer balance follow. What is missing is a face — nothing is wired to a screen yet.
 
 ---
 
@@ -122,6 +123,8 @@ Every module is two files, and the split is strict. `routes.ts` holds the router
 | `PATCH /api/categories/:id` | purchasing | Rename, or deactivate |
 | `GET`/`POST`/`PATCH /api/brands` | purchasing | Its own module, the same shape |
 | `GET`/`PATCH /api/settings` | **admin** | Its own module. The global margin and the payment terms, plus the currency and location the screen reports |
+| `GET`/`POST /api/users` | **admin** | Staff list; adding one returns a generated password once |
+| `GET`/`PATCH /api/users/:id` | **admin** | Rename, reassign a role, deactivate. Never deleted |
 
 Admin reaches everything.
 
@@ -188,6 +191,63 @@ below zero is refused.
 Low stock carries what a purchasing officer needs in order to act: how short,
 who supplied it most recently, and **anything already expected on an open
 order** — the shortfall may be covered already, and reordering would double up.
+
+### Users and roles
+
+**Its own module at `/api/users`, admin only.** Add a member of staff, assign
+them one of the four roles, rename them, deactivate them. A user has exactly one
+role — there are no custom permission sets in this build, which is why nothing
+here stores a permission: the role *is* the permission, and what each role
+reaches is decided by the `requireRole` on each router.
+
+**Users are never deleted.** Deactivating stops sign-in and ends any open
+session, while keeping their name on the sales, receipts and adjustments they
+made.
+
+**The password is generated, not chosen, and shown once.** `POST /api/users`
+returns a `temporaryPassword` in the create response and nowhere else — only the
+hash is stored, so that response is the sole moment the plaintext exists. An
+admin who loses it has to issue a new account. The generated string avoids
+characters that are ambiguous read aloud or written down: no `O`/`0`, no
+`I`/`l`/`1`.
+
+There is no change-password endpoint. The wireframe's "the user is asked to
+change it" is therefore still aspirational, and is the obvious next piece if this
+grows past a demo.
+
+**You cannot lock yourself out.** An admin may not deactivate their own account
+or move themselves off admin. Either would end their own session on the next
+request and, if they were the only admin, leave nobody able to undo it. The
+screen agrees — your own row offers no Edit.
+
+#### The role now comes from the row, not the token
+
+The UserForm artboard promises that "changing someone's role takes effect on their
+next request — an open session does not keep the old permissions". That was not
+true: `requireRole` read the role claim out of the JWT, so a change waited for the
+token to expire.
+
+`requireAuth` now reads the user on every request and ignores the claim. This
+costs nothing extra, because it already had to ask the database whether the token
+had been signed out; that lookup returns the user row with it, in one round trip.
+Three things follow:
+
+- A role change lands on that person's very next request.
+- Deactivating an account ends any open session immediately.
+- A correctly signed token for a user who no longer exists is refused.
+
+Token lifetime also drops from 8 hours to 1 (`JWT_EXPIRES_IN`). With the row now
+authoritative, the long-lived token was less dangerous than it had been — a
+stolen one dies the moment the account is switched off — but an hour limits the
+damage in the window before anyone notices. The cost is that a till user is sent
+back to the login screen mid-shift; it is one environment variable if that proves
+annoying in the shop.
+
+This changed what the tests had to do. A suite can no longer sign itself a
+purchasing token for the sales account: it has to authenticate as somebody who
+actually holds that role, which is the rule the shop runs under. `baseFixture`
+seeds one member of staff per role, and `test/helpers/auth.ts` hands out their
+tokens.
 
 ### Settings
 
@@ -379,7 +439,7 @@ Every amount is `numeric` in Postgres and a string in transit — `"310.00"`, ne
 
 A JWT is valid until it expires, and presenting one asks the server nothing — so a client-side sign-out is only the client agreeing to forget the token, and anyone who copied it keeps the session. Tokens therefore carry an id, `POST /api/auth/logout` records it as revoked, and every authenticated request checks that list. Only that token is revoked: signing out at the till does not sign the same person out on their phone.
 
-The cost is one indexed lookup per request, affordable precisely because the API is a persistent process next to the database.
+The cost is one indexed lookup per request, affordable precisely because the API is a persistent process next to the database. That same lookup now carries the user row back with it, which is what makes a role change or a deactivation land on the next request — see Users and roles above.
 
 ---
 
@@ -424,7 +484,30 @@ The margin itself is a setting, so what it should be is the owner's call at a ke
 
 **3. Credit notes.** The invoices tab says a mistake is corrected with a credit, not by editing history. That is the right principle, but there is no credit-note table and it is not in scope — so today it is a statement of intent.
 
-**4. ~~The scope and progress documents are not in version control.~~ Done 17 September.** Both now live in `docs/` in the API repo, so a decision and the code that implements it move together. The wireframes in `design/` are still outside any repository — worth deciding whether they belong here too, since the API's tests assert figures read off them.
+**4. Session length per role.** Parked 18 September as a future requirement, not
+a blocker.
+
+Every session is one hour (`JWT_EXPIRES_IN`), which is right for purchasing,
+accounts and admin and probably wrong for the till: Sales is signed in for a
+shift and being bounced to the login screen mid-queue is a real irritation. The
+value is already an environment variable, so a different single number costs
+nothing — what is wanted is a different number *per role*.
+
+Two things to know before it is built. The expiry is a signed claim fixed when
+the token is issued, so it cannot be changed afterwards; and because the role is
+now read from the user row on every request, the two can disagree — a Sales
+account given a long session and then promoted keeps that long session while
+holding the new role. Capping by *current* role at verify time, comparing the
+token's `iat` against a per-role maximum, closes that and costs nothing extra
+since the row is already being read.
+
+Worth weighing at the same time: the till is the most exposed machine in the
+shop — shared, public-facing, often unattended — so it is the worst place for the
+longest-lived token. A sliding expiry, where an active session refreshes and an
+idle one dies, fits a counter better than a long fixed one. More work, and the
+right answer if this outlives the demo.
+
+**5. ~~The scope and progress documents are not in version control.~~ Done 17 September.** Both now live in `docs/` in the API repo, so a decision and the code that implements it move together. The wireframes in `design/` are still outside any repository — worth deciding whether they belong here too, since the API's tests assert figures read off them.
 
 ---
 

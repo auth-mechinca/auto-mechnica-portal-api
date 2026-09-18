@@ -2,8 +2,25 @@ import { randomBytes } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 
 /** Work factor. Raising it later is safe — every hash stores the cost it was
- *  made with, so existing passwords keep verifying at their old factor. */
-export const BCRYPT_COST = 12;
+ *  made with, so existing passwords keep verifying at their old factor.
+ *
+ *  Lowered only under `NODE_ENV=test`, and not by any amount a deployment could
+ *  ask for: the floor below is unconditional outside tests, so setting
+ *  `BCRYPT_COST=4` on a server does nothing. The suite is the reason it moves at
+ *  all — cost 12 is ~250ms by design, `DUMMY_HASH` pays it once per module load,
+ *  and with a test file per module that is ten seconds of the run spent proving
+ *  bcrypt is slow, which no test here is asserting. */
+const PRODUCTION_COST = 12;
+
+function workFactor(): number {
+  if (process.env.NODE_ENV !== 'test') return PRODUCTION_COST;
+  const asked = Number(process.env.BCRYPT_COST);
+  return Number.isInteger(asked) && asked >= 4 && asked <= PRODUCTION_COST
+    ? asked
+    : PRODUCTION_COST;
+}
+
+export const BCRYPT_COST = workFactor();
 
 export const hashPassword = (plain: string): Promise<string> => bcrypt.hash(plain, BCRYPT_COST);
 
