@@ -17,11 +17,11 @@
 | Backoffice — suppliers, PO create | **Done** — supplier CRUD with deactivation, drafting a PO, sending, cancelling |
 | IMS | **Done** — catalogue, part detail with its stock ledger, adjustments, low stock |
 | Financial Core | **Done** — customer accounts with ageing, account detail, recording payments, the cheque queue |
-| Settings | **Done** — its own admin-only module: the margin, plus the currency and location the screen reports |
+| Settings | **Done** — its own admin-only module: the margin and payment terms, plus the currency and location the screen reports |
 | Next.js frontend | **Not started** — repo is an empty initial commit |
 | API documentation | **Done** — OpenAPI 3.1 at `/openapi.json`, Swagger UI at `/docs` |
 
-**222 tests pass.** The spine of the demo now works end to end on the server: receive a purchase order at a new FX rate, watch the landed cost and suggested price move, then sell the part at the till and watch stock and the customer balance follow. What is missing is a face — nothing is wired to a screen yet.
+**231 tests pass.** The spine of the demo now works end to end on the server: receive a purchase order at a new FX rate, watch the landed cost and suggested price move, then sell the part at the till and watch stock and the customer balance follow. What is missing is a face — nothing is wired to a screen yet.
 
 ---
 
@@ -37,7 +37,7 @@ Fidelity is deliberately low: greyscale, real field names, real data, no brandin
 |---|---|
 | **Shell & nav by role** | Not a screen you visit — the four role menus side by side, plus the blocked-route state. Makes the RBAC demo concrete rather than asserted. |
 | **Add / edit user** | Section 9 lists "User/Role Management" but no form. The list alone can't create anybody. |
-| **Settings** | The scope calls the global margin configurable but names no screen to change it on. Three fields, two of them read-only. Built — see Section 3. |
+| **Settings** | The scope calls the global margin configurable but names no screen to change it on. Four fields, two of them read-only. Built — see Section 3. |
 | **Customer detail — invoices tab** | Not a new screen; the second tab state of "Customer Account Detail". Drawn separately because a wireframe can only show one tab at a time. |
 
 One in-screen addition beyond scope: **Low Stock → "Start purchase order"**, which opens PO Create with the ticked parts already on it. The scope says "simple list"; without this the screen dead-ends. Flagged on the screen itself and easy to remove.
@@ -121,7 +121,7 @@ Every module is two files, and the split is strict. `routes.ts` holds the router
 | `GET`/`POST /api/categories` | purchasing | Its own module — dropdown list, and creating one on the fly |
 | `PATCH /api/categories/:id` | purchasing | Rename, or deactivate |
 | `GET`/`POST`/`PATCH /api/brands` | purchasing | Its own module, the same shape |
-| `GET`/`PATCH /api/settings` | **admin** | Its own module. The global margin, plus the currency and location the screen reports |
+| `GET`/`PATCH /api/settings` | **admin** | Its own module. The global margin and the payment terms, plus the currency and location the screen reports |
 
 Admin reaches everything.
 
@@ -208,11 +208,12 @@ frontend called it, and leaving a second path to the same data — one of them w
 the wrong gate — would have reintroduced exactly what this closed. A test asserts
 it now 404s.
 
-**`GET` returns what the screen draws:** one editable field and two read-only ones.
+**`GET` returns what the screen draws:** two editable fields and two read-only ones.
 
 | Field | | Source |
 |---|---|---|
 | `defaultMarginPct` | editable | `settings` table |
+| `defaultPaymentTermsDays` | editable, whole days 0–365 | `settings` table |
 | `sellingCurrency` | read-only, always `GHS` | a constant, not a row — nothing in this build can change it |
 | `location` | read-only, `{ id, name }` | the single active location |
 
@@ -222,23 +223,48 @@ second location arrives the screen starts saying something different without a
 frontend release. `location` resolves through the same `defaultLocation` helper
 the stock code uses, so the shop the screen names is the shop being sold out of.
 
-**`PATCH` accepts `defaultMarginPct` only**, under 100 — a margin is a share of
-the selling price, and at 100% the price would have to be infinite. Changing it
-affects what is suggested from then on and never rewrites a price somebody has
-already confirmed. Anything else in the body is ignored rather than honoured: a
-`PATCH` carrying `sellingCurrency: "USD"` succeeds and still answers `GHS`.
+**`PATCH` takes either editable field, or both**, and requires at least one —
+the screen sends what changed. A margin must be under 100, because a margin is a
+share of the selling price and at 100% the price would have to be infinite. Terms
+are whole days from 0 to 365: zero means an account settles on the day of the
+invoice, and the cap is there because a year of credit is a typo rather than a
+policy. Read-only fields in the body are ignored rather than honoured — a `PATCH`
+carrying `sellingCurrency: "USD"` succeeds and still answers `GHS`.
 
-**Still open: `defaultPaymentTermsDays`.** It is a real shop-wide setting —
-invoicing stamps a due date from it — but it is not on the Settings wireframe, so
-it is not in this response. It stays seeded and is read straight from the table
-by POS, which is unchanged behaviour. The call still to make is whether it
-becomes a fourth field on the screen; adding it later is additive, so nothing
-here forecloses it.
+**Neither change reaches backwards**, and that is the property the screen depends
+on. A new margin changes what price management suggests next; prices already
+confirmed are decisions somebody took at the margin of the day. New terms apply
+to invoices raised next, because `sales_invoices.due_date` is stamped when the
+invoice is raised rather than derived on read — otherwise moving 30 days to 45
+would re-age the whole ledger overnight and a customer ten days late would
+quietly become five days early. A test in `pos-sale.test.ts` raises an invoice,
+changes the terms, and asserts that the next invoice moves and the issued one
+does not.
 
-One thing to fix when the wireframes are next touched: the Settings artboard
-still reads "Suggested price = landed cost × (1 + margin)", which is the markup
-formula the API no longer uses. It belongs with the stale-wireframe item in
-Section 5.
+**`defaultPaymentTermsDays` is on the screen**, which was the one question left
+open when this was specced. It is not on the Settings wireframe, so this adds a
+field the artboard does not show — deliberately. It is a real shop-wide setting
+that nothing else could reach, and the alternative was an owner having to ask a
+developer to change how long their customers get to pay.
+
+What made it safe to expose is that it is a write-time input rather than stored
+state being displayed: POS reads it once, at the moment an invoice is raised, and
+the answer is then frozen on the row. Editing it cannot damage anything already
+issued. The screen does need to say so, though — an owner who changes 30 to 45
+because a customer asked for more time will expect the invoice already overdue to
+move, and it will not. The label wants to read *terms for new invoices*, not
+*payment terms*.
+
+One thing to know before the label is written: `customers` has no terms column,
+so terms are shop-wide, full stop. The `due_date` comment anticipates per-customer
+terms arriving later, at which point this field becomes the default for accounts
+that do not override it. Phrasing it as a default now saves renaming it then.
+
+Two things for the Settings artboard when the wireframes are next touched. It
+still reads "Suggested price = landed cost × (1 + margin)", the markup formula the
+API no longer uses; and it now needs the payment-terms field, which the API
+returns and the drawing does not show. Both belong with the stale-wireframe item
+in Section 5.
 
 ### Categories and brands
 
@@ -389,6 +415,8 @@ An earlier note said `prices` already had a review state and that option (b) was
 **1. The wireframes still show markup-era prices.** Settled in the code, not yet on the canvas.
 
 Margin now means margin on the selling price — `suggested = landed ÷ (1 − margin ÷ 100)` — and the API, seeds and tests moved together. The 26 artboards did not: they still show GH₵ 393.39 where the API says GH₵ 448.31, and PriceEdit's "36.9% on cost" no longer describes the system. The figures need regenerating before the client sees the canvas and the API side by side.
+
+The Settings artboard has drifted in a second way: it repeats the markup formula, and it is now a field short. `/api/settings` returns the payment terms as an editable field, which the drawing never showed — see Section 3 for why it was added.
 
 The margin itself is a setting, so what it should be is the owner's call at a keyboard, not an open question here.
 

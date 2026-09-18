@@ -652,7 +652,7 @@ export function buildOpenApiDocument(): Record<string, unknown> {
           tags: ['Settings'],
           summary: 'Shop-wide settings',
           description: [
-            'Everything the Settings screen draws: one field that can be changed and two',
+            'Everything the Settings screen draws: two fields that can be changed and two',
             'that report what the system has decided.',
             '',
             '`sellingCurrency` is always `GHS` and `location` is the single shop. Both are',
@@ -666,16 +666,28 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         },
         patch: {
           tags: ['Settings'],
-          summary: 'Change the global margin',
+          summary: 'Change the margin or the payment terms',
           description: [
-            '`defaultMarginPct` is a margin **on the selling price**, not a markup on',
+            'Send the fields that changed; at least one is required. The read-only fields',
+            'in the response are not accepted and a body carrying one is not an error —',
+            'it simply does not set anything.',
+            '',
+            '**`defaultMarginPct`** is a margin **on the selling price**, not a markup on',
             'cost: 35 means 35% of what the customer pays. The suggestion is therefore',
             '`landed cost / (1 - margin/100)`, so a part costing 291.40 suggests 448.31,',
             'not 393.39.',
             '',
-            'Changing it affects what is suggested from here on. Prices already saved are',
-            'left alone — they were decisions taken at the margin of the day, and',
-            'rewriting them would silently reprice the catalogue.',
+            '**`defaultPaymentTermsDays`** is how many days after the invoice date a named',
+            "account's invoice falls due. A walk-in is settled at the counter and is always",
+            'due the day it is raised, whatever this says.',
+            '',
+            'Neither change reaches backwards. A new margin changes what is suggested from',
+            'here on; prices already saved were decisions taken at the margin of the day.',
+            'New terms apply to invoices raised from here on: `due_date` is stamped on the',
+            'invoice rather than derived on read, so an invoice keeps the terms in force',
+            'the day it was issued — otherwise moving 30 days to 45 would re-age the whole',
+            'ledger overnight and a customer ten days late would quietly become five days',
+            'early.',
           ].join('\n'),
           requestBody: { required: true, content: json(ref('UpdateSettingsRequest')) },
           responses: {
@@ -683,7 +695,9 @@ export function buildOpenApiDocument(): Record<string, unknown> {
             // Spread first: the specific 400 below is the useful one, and
             // ordering it after keeps it from being overwritten.
             ...AUTH_ERRORS,
-            400: errorResponse('A margin must be under 100%'),
+            400: errorResponse(
+              'A margin must be under 100%, terms must be 0–365 whole days, and a body must change at least one setting',
+            ),
           },
         },
       },

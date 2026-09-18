@@ -43,6 +43,7 @@ describe('reading settings', () => {
 
     assert.equal(res.status, 200);
     assert.equal(res.body.defaultMarginPct, '35');
+    assert.equal(res.body.defaultPaymentTermsDays, 30, 'a count of days, not a string');
     assert.equal(res.body.sellingCurrency, 'GHS');
     assert.equal(res.body.location.id, base.locationId);
     assert.equal(res.body.location.name, 'Main Shop');
@@ -89,6 +90,16 @@ describe('changing the margin', () => {
     assert.equal(res.status, 400);
   });
 
+  it('leaves the other setting alone', async () => {
+    const res = await request(server)
+      .patch('/api/settings')
+      .set(as('admin'))
+      .send({ defaultMarginPct: '36' });
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.defaultPaymentTermsDays, 30, 'a PATCH sends what changed');
+  });
+
   it('ignores a read-only field rather than pretending to set it', async () => {
     const res = await request(server)
       .patch('/api/settings')
@@ -97,6 +108,71 @@ describe('changing the margin', () => {
 
     assert.equal(res.status, 200);
     assert.equal(res.body.sellingCurrency, 'GHS', 'the shop still sells in Cedis');
+  });
+});
+
+describe('changing the payment terms', () => {
+  it('saves whole days', async () => {
+    const res = await request(server)
+      .patch('/api/settings')
+      .set(as('admin'))
+      .send({ defaultPaymentTermsDays: 45 });
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.defaultPaymentTermsDays, 45);
+  });
+
+  it('allows nought — an account that settles on the day', async () => {
+    const res = await request(server)
+      .patch('/api/settings')
+      .set(as('admin'))
+      .send({ defaultPaymentTermsDays: 0 });
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.defaultPaymentTermsDays, 0);
+  });
+
+  it('refuses a fraction of a day', async () => {
+    const res = await request(server)
+      .patch('/api/settings')
+      .set(as('admin'))
+      .send({ defaultPaymentTermsDays: 30.5 });
+
+    assert.equal(res.status, 400);
+  });
+
+  it('refuses negative terms', async () => {
+    const res = await request(server)
+      .patch('/api/settings')
+      .set(as('admin'))
+      .send({ defaultPaymentTermsDays: -1 });
+
+    assert.equal(res.status, 400, 'an invoice cannot fall due before it is raised');
+  });
+
+  it('refuses more than a year, which is a typo rather than a policy', async () => {
+    const res = await request(server)
+      .patch('/api/settings')
+      .set(as('admin'))
+      .send({ defaultPaymentTermsDays: 400 });
+
+    assert.equal(res.status, 400);
+  });
+
+  it('refuses a body that changes nothing', async () => {
+    const res = await request(server).patch('/api/settings').set(as('admin')).send({});
+
+    assert.equal(res.status, 400);
+  });
+
+  it('puts the terms back for the suites that follow', async () => {
+    const res = await request(server)
+      .patch('/api/settings')
+      .set(as('admin'))
+      .send({ defaultPaymentTermsDays: 30, defaultMarginPct: '35' });
+
+    assert.equal(res.body.defaultPaymentTermsDays, 30);
+    assert.equal(res.body.defaultMarginPct, '35');
   });
 });
 
