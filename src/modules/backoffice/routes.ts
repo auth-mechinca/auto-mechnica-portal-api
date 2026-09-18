@@ -29,6 +29,53 @@ backofficeRouter.get(
 );
 
 backofficeRouter.post(
+  '/purchase-orders',
+  validateBody(service.createPurchaseOrderInput),
+  asyncHandler(async (req, res) => {
+    res.status(201).json(await service.createPurchaseOrder(req.body));
+  }),
+);
+
+backofficeRouter.patch(
+  '/purchase-orders/:id',
+  validateParams(service.purchaseOrderIdParam),
+  validateBody(service.updatePurchaseOrderInput),
+  asyncHandler(async (req, res) => {
+    const { id } = res.locals.params as service.PurchaseOrderIdParam;
+    res.json(await service.updatePurchaseOrder(id, req.body));
+  }),
+);
+
+backofficeRouter.post(
+  '/purchase-orders/:id/send',
+  validateParams(service.purchaseOrderIdParam),
+  asyncHandler(async (_req, res) => {
+    const { id } = res.locals.params as service.PurchaseOrderIdParam;
+    res.json(await service.sendPurchaseOrder(id));
+  }),
+);
+
+backofficeRouter.post(
+  '/purchase-orders/:id/cancel',
+  validateParams(service.purchaseOrderIdParam),
+  validateBody(service.cancelPurchaseOrderInput),
+  asyncHandler(async (req, res) => {
+    const { id } = res.locals.params as service.PurchaseOrderIdParam;
+    res.json(await service.cancelPurchaseOrder(id, req.body, currentUser(req).sub));
+  }),
+);
+
+backofficeRouter.post(
+  '/purchase-orders/:id/close',
+  validateParams(service.purchaseOrderIdParam),
+  validateBody(service.closePurchaseOrderInput),
+  asyncHandler(async (req, res) => {
+    const { id } = res.locals.params as service.PurchaseOrderIdParam;
+    res.json(await service.closePurchaseOrder(id, req.body, currentUser(req).sub));
+  }),
+);
+
+backofficeRouter.post(
   '/purchase-orders/:id/receive',
   validateParams(service.purchaseOrderIdParam),
   validateBody(service.receiveStockInput),
@@ -83,7 +130,40 @@ backofficeRouter.patch(
   }),
 );
 
-// Suppliers (6.1) and creating a purchase order are still to come.
-// TODO GET/POST  /suppliers        -> service.listSuppliers / createSupplier
-// TODO GET/PATCH /suppliers/:id    -> service.getSupplier / updateSupplier
-// TODO POST      /purchase-orders  -> service.createPurchaseOrder
+/* Suppliers (6.1). Never deleted — one you stop using becomes inactive, so its
+ * purchase-order history stays intact and past costs remain explicable. */
+
+backofficeRouter.get(
+  '/suppliers',
+  validateQuery(service.listSuppliersQuery),
+  asyncHandler(async (_req, res) => {
+    res.json(await service.listSuppliers(res.locals.query as service.ListSuppliersQuery));
+  }),
+);
+
+backofficeRouter.post(
+  '/suppliers',
+  validateBody(service.createSupplierInput),
+  asyncHandler(async (req, res) => {
+    res.status(201).json(await service.createSupplier(req.body));
+  }),
+);
+
+backofficeRouter.get(
+  '/suppliers/:id',
+  validateParams(service.supplierIdParam),
+  asyncHandler(async (_req, res) => {
+    const { id } = res.locals.params as service.SupplierIdParam;
+    res.json(await service.getSupplier(id));
+  }),
+);
+
+backofficeRouter.patch(
+  '/suppliers/:id',
+  validateParams(service.supplierIdParam),
+  validateBody(service.updateSupplierInput),
+  asyncHandler(async (req, res) => {
+    const { id } = res.locals.params as service.SupplierIdParam;
+    res.json(await service.updateSupplier(id, req.body));
+  }),
+);

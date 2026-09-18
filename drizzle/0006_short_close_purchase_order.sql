@@ -1,0 +1,1 @@
+ALTER TYPE "app"."po_status" ADD VALUE 'closed';
