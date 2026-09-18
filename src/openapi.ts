@@ -3,6 +3,8 @@ import * as authService from './modules/auth/service.js';
 import * as backofficeService from './modules/backoffice/service.js';
 import * as financialService from './modules/financial/service.js';
 import * as imsService from './modules/ims/service.js';
+import * as categoriesService from './modules/categories/service.js';
+import * as brandsService from './modules/brands/service.js';
 import * as posService from './modules/pos/service.js';
 
 /** The OpenAPI document, generated from the very zod schemas the API validates
@@ -102,6 +104,16 @@ export function buildOpenApiDocument(): Record<string, unknown> {
           'Section 4. Requires the **purchasing** or **admin** role. Stock is never typed: it moves only through a purchase order receipt, a sale, or an adjustment recorded with a reason.',
       },
       {
+        name: 'Categories',
+        description:
+          'Their own module. Requires the **purchasing** or **admin** role.',
+      },
+      {
+        name: 'Brands',
+        description:
+          'Their own module. Requires the **purchasing** or **admin** role.',
+      },
+      {
         name: 'Suppliers',
         description:
           'Section 6.1. Requires the **purchasing** or **admin** role. Suppliers are never deleted — one you stop using becomes inactive, so its purchase-order history stays intact.',
@@ -159,9 +171,12 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         AdjustStockRequest: jsonSchema(imsService.adjustStockInput, 'input'),
         LowStockRow: jsonSchema(imsService.lowStockRow, 'output'),
         Adjustment: jsonSchema(imsService.adjustmentRow, 'output'),
-        Taxonomy: jsonSchema(imsService.taxonomyRow, 'output'),
-        CreateTaxonomyRequest: jsonSchema(imsService.createTaxonomyInput, 'input'),
-        UpdateTaxonomyRequest: jsonSchema(imsService.updateTaxonomyInput, 'input'),
+        Category: jsonSchema(categoriesService.categoryRow, 'output'),
+        CreateCategoryRequest: jsonSchema(categoriesService.createCategoryInput, 'input'),
+        UpdateCategoryRequest: jsonSchema(categoriesService.updateCategoryInput, 'input'),
+        Brand: jsonSchema(brandsService.brandRow, 'output'),
+        CreateBrandRequest: jsonSchema(brandsService.createBrandInput, 'input'),
+        UpdateBrandRequest: jsonSchema(brandsService.updateBrandInput, 'input'),
         UpdatePurchaseOrderRequest: jsonSchema(backofficeService.updatePurchaseOrderInput, 'input'),
         UpdateSettingsRequest: jsonSchema(backofficeService.updateSettingsInput, 'input'),
       },
@@ -333,67 +348,6 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         },
       },
 
-      '/api/ims/{taxonomy}': {
-        get: {
-          tags: ['Inventory'],
-          summary: 'Categories or brands',
-          description: [
-            'Two endpoints sharing one description: `/api/ims/categories` and',
-            '`/api/ims/brands` behave identically.',
-            '',
-            'These replaced free text on the part. As text they drifted immediately —',
-            'one person typed "Electrical" and another "Electrical and Charging", and',
-            'the filter list simply reported both, with no way to tell a new category',
-            'from a typo of an existing one.',
-            '',
-            '`partCount` says how many parts use each, so a screen can show what',
-            'deactivating one would affect.',
-          ].join('\n'),
-          parameters: [
-            { name: 'q', in: 'query', required: false, schema: { type: 'string' }, description: 'Match the name, for a type-ahead dropdown' },
-            {
-              name: 'status',
-              in: 'query',
-              required: false,
-              schema: { type: 'string', enum: ['active', 'inactive', 'all'], default: 'active' },
-            },
-          ],
-          responses: {
-            200: { description: 'By name', content: json({ type: 'array', items: ref('Taxonomy') }) },
-            ...AUTH_ERRORS,
-          },
-        },
-        post: {
-          tags: ['Inventory'],
-          summary: 'Create a category or brand',
-          description:
-            'Intended to be called from the part form when the officer types a name that does not exist yet. Names are compared case-insensitively and trimmed, so "Electrical", "electrical" and " Electrical " are one category — a duplicate is refused with 409 naming the existing one.',
-          requestBody: { required: true, content: json(ref('CreateTaxonomyRequest')) },
-          responses: {
-            201: { description: 'Created', content: json(ref('Taxonomy')) },
-            409: errorResponse('A category or brand with that name already exists'),
-            ...AUTH_ERRORS,
-          },
-        },
-      },
-
-      '/api/ims/{taxonomy}/{id}': {
-        patch: {
-          tags: ['Inventory'],
-          summary: 'Rename, or deactivate',
-          description:
-            'Renaming reaches every part using it, because a part points at the row rather than carrying the text. Neither is ever deleted — a part references it, and removing the row would leave that part uncategorised — so `isActive: false` takes it out of the dropdown while keeping the parts intact.',
-          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
-          requestBody: { required: true, content: json(ref('UpdateTaxonomyRequest')) },
-          responses: {
-            200: { description: 'Updated', content: json(ref('Taxonomy')) },
-            404: errorResponse('Not found'),
-            409: errorResponse('Another one already has that name'),
-            ...AUTH_ERRORS,
-          },
-        },
-      },
-
       '/api/ims/low-stock': {
         get: {
           tags: ['Inventory'],
@@ -402,6 +356,108 @@ export function buildOpenApiDocument(): Record<string, unknown> {
             'Each row carries how short it is, who supplied it most recently, and anything still expected on an open purchase order — because the shortfall may already be covered, and reordering would double up.',
           responses: {
             200: { description: 'Shortest first', content: json({ type: 'array', items: ref('LowStockRow') }) },
+            ...AUTH_ERRORS,
+          },
+        },
+      },
+
+      '/api/categories': {
+        get: {
+          tags: ['Categories'],
+          summary: 'List categories',
+          description:
+            'Intended for a type-ahead dropdown on the part form. `partCount` says how many parts use each, so a screen can show what deactivating one would affect.',
+          parameters: [
+            { name: 'q', in: 'query', required: false, schema: { type: 'string' }, description: 'Match the name' },
+            {
+              name: 'status',
+              in: 'query',
+              required: false,
+              schema: { type: 'string', enum: ['active', 'inactive', 'all'], default: 'active' },
+            },
+          ],
+          responses: {
+            200: { description: 'By name', content: json({ type: 'array', items: ref('Category') }) },
+            ...AUTH_ERRORS,
+          },
+        },
+        post: {
+          tags: ['Categories'],
+          summary: 'Create a categorie',
+          description:
+            'Called from the part form when an officer types a category that does not exist yet. Names are trimmed and compared case-insensitively, so "Bosch", "bosch" and " Bosch " are one — a duplicate is refused with 409 naming the existing row.',
+          requestBody: { required: true, content: json(ref('CreateCategoryRequest')) },
+          responses: {
+            201: { description: 'Created', content: json(ref('Category')) },
+            409: errorResponse('One with that name already exists'),
+            ...AUTH_ERRORS,
+          },
+        },
+      },
+
+      '/api/categories/{id}': {
+        patch: {
+          tags: ['Categories'],
+          summary: 'Rename, or deactivate',
+          description:
+            'Renaming reaches every part using it, because a part holds a reference rather than a copy of the text. Nothing is deleted — a part points at this row, so removing it would leave that part unclassified; `isActive: false` takes it out of the dropdown instead.',
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          requestBody: { required: true, content: json(ref('UpdateCategoryRequest')) },
+          responses: {
+            200: { description: 'Updated', content: json(ref('Category')) },
+            404: errorResponse('Not found'),
+            409: errorResponse('Another one already has that name'),
+            ...AUTH_ERRORS,
+          },
+        },
+      },
+
+      '/api/brands': {
+        get: {
+          tags: ['Brands'],
+          summary: 'List brands',
+          description:
+            'Intended for a type-ahead dropdown on the part form. `partCount` says how many parts use each, so a screen can show what deactivating one would affect.',
+          parameters: [
+            { name: 'q', in: 'query', required: false, schema: { type: 'string' }, description: 'Match the name' },
+            {
+              name: 'status',
+              in: 'query',
+              required: false,
+              schema: { type: 'string', enum: ['active', 'inactive', 'all'], default: 'active' },
+            },
+          ],
+          responses: {
+            200: { description: 'By name', content: json({ type: 'array', items: ref('Brand') }) },
+            ...AUTH_ERRORS,
+          },
+        },
+        post: {
+          tags: ['Brands'],
+          summary: 'Create a brand',
+          description:
+            'Called from the part form when an officer types a brand that does not exist yet. Names are trimmed and compared case-insensitively, so "Bosch", "bosch" and " Bosch " are one — a duplicate is refused with 409 naming the existing row.',
+          requestBody: { required: true, content: json(ref('CreateBrandRequest')) },
+          responses: {
+            201: { description: 'Created', content: json(ref('Brand')) },
+            409: errorResponse('One with that name already exists'),
+            ...AUTH_ERRORS,
+          },
+        },
+      },
+
+      '/api/brands/{id}': {
+        patch: {
+          tags: ['Brands'],
+          summary: 'Rename, or deactivate',
+          description:
+            'Renaming reaches every part using it, because a part holds a reference rather than a copy of the text. Nothing is deleted — a part points at this row, so removing it would leave that part unclassified; `isActive: false` takes it out of the dropdown instead.',
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          requestBody: { required: true, content: json(ref('UpdateBrandRequest')) },
+          responses: {
+            200: { description: 'Updated', content: json(ref('Brand')) },
+            404: errorResponse('Not found'),
+            409: errorResponse('Another one already has that name'),
             ...AUTH_ERRORS,
           },
         },

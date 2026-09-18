@@ -20,7 +20,7 @@
 | Next.js frontend | **Not started** — repo is an empty initial commit |
 | API documentation | **Done** — OpenAPI 3.1 at `/openapi.json`, Swagger UI at `/docs` |
 
-**204 tests pass.** The spine of the demo now works end to end on the server: receive a purchase order at a new FX rate, watch the landed cost and suggested price move, then sell the part at the till and watch stock and the customer balance follow. What is missing is a face — nothing is wired to a screen yet.
+**213 tests pass.** The spine of the demo now works end to end on the server: receive a purchase order at a new FX rate, watch the landed cost and suggested price move, then sell the part at the till and watch stock and the customer balance follow. What is missing is a face — nothing is wired to a screen yet.
 
 ---
 
@@ -118,9 +118,9 @@ Every module is two files, and the split is strict. `routes.ts` holds the router
 | `POST /api/ims/parts/:id/adjust` | purchasing | Damage, loss, count correction — reason required |
 | `GET /api/ims/adjustments` | purchasing | Recent adjustments across parts |
 | `GET /api/ims/low-stock` | purchasing | With usual supplier and what is already on order |
-| `GET`/`POST /api/ims/categories` | purchasing | For the type-ahead dropdown, and creating one on the fly |
-| `PATCH /api/ims/categories/:id` | purchasing | Rename, or deactivate |
-| `GET`/`POST`/`PATCH /api/ims/brands` | purchasing | The same, for brands |
+| `GET`/`POST /api/categories` | purchasing | Its own module — dropdown list, and creating one on the fly |
+| `PATCH /api/categories/:id` | purchasing | Rename, or deactivate |
+| `GET`/`POST`/`PATCH /api/brands` | purchasing | Its own module, the same shape |
 
 Admin reaches everything.
 
@@ -189,6 +189,17 @@ who supplied it most recently, and **anything already expected on an open
 order** — the shortfall may be covered already, and reordering would double up.
 
 ### Categories and brands
+
+**Each is its own module**, mounted at `/api/categories` and `/api/brands` beside
+the other five rather than under IMS. They were briefly inside IMS and documented
+together as `/api/ims/{taxonomy}`, which described an endpoint that did not exist:
+the routes were always two concrete paths, and the placeholder made the spec
+invalid as well as misleading. Separate modules, separate paths, separate
+documentation.
+
+They read almost identically and could share an implementation. They do not, on
+purpose — a brand is who made the part and a category is what kind of part it is,
+and one will grow a field the other does not.
 
 Both were free text on a part, and drifted the first day they were used: one part
 went in as "Electrical" and another as "Electrical and Charging", and the filter

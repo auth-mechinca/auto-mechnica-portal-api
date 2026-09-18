@@ -6,16 +6,9 @@ import { createTestDb } from './helpers/db.js';
 import { baseFixture } from './helpers/fixtures.js';
 import type { Db } from '../src/db/client.js';
 import { inventoryBalances, prices } from '../src/db/schema/index.js';
-import {
-  createBrand,
-  createCategory,
-  createPart,
-  getPart,
-  listBrands,
-  listCategories,
-  listParts,
-  updatePart,
-} from '../src/modules/ims/service.js';
+import { createPart, getPart, listParts, updatePart } from '../src/modules/ims/service.js';
+import { createCategory, listCategories } from '../src/modules/categories/service.js';
+import { createBrand, listBrands } from '../src/modules/brands/service.js';
 
 let db: Db;
 let close: () => Promise<void>;
