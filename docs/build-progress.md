@@ -484,7 +484,30 @@ The margin itself is a setting, so what it should be is the owner's call at a ke
 
 **3. Credit notes.** The invoices tab says a mistake is corrected with a credit, not by editing history. That is the right principle, but there is no credit-note table and it is not in scope — so today it is a statement of intent.
 
-**4. ~~The scope and progress documents are not in version control.~~ Done 17 September.** Both now live in `docs/` in the API repo, so a decision and the code that implements it move together. The wireframes in `design/` are still outside any repository — worth deciding whether they belong here too, since the API's tests assert figures read off them.
+**4. Session length per role.** Parked 18 September as a future requirement, not
+a blocker.
+
+Every session is one hour (`JWT_EXPIRES_IN`), which is right for purchasing,
+accounts and admin and probably wrong for the till: Sales is signed in for a
+shift and being bounced to the login screen mid-queue is a real irritation. The
+value is already an environment variable, so a different single number costs
+nothing — what is wanted is a different number *per role*.
+
+Two things to know before it is built. The expiry is a signed claim fixed when
+the token is issued, so it cannot be changed afterwards; and because the role is
+now read from the user row on every request, the two can disagree — a Sales
+account given a long session and then promoted keeps that long session while
+holding the new role. Capping by *current* role at verify time, comparing the
+token's `iat` against a per-role maximum, closes that and costs nothing extra
+since the row is already being read.
+
+Worth weighing at the same time: the till is the most exposed machine in the
+shop — shared, public-facing, often unattended — so it is the worst place for the
+longest-lived token. A sliding expiry, where an active session refreshes and an
+idle one dies, fits a counter better than a long fixed one. More work, and the
+right answer if this outlives the demo.
+
+**5. ~~The scope and progress documents are not in version control.~~ Done 17 September.** Both now live in `docs/` in the API repo, so a decision and the code that implements it move together. The wireframes in `design/` are still outside any repository — worth deciding whether they belong here too, since the API's tests assert figures read off them.
 
 ---
 
