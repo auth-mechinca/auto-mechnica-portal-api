@@ -12,6 +12,8 @@ import { parts } from '../src/db/schema/index.js';
 import {
   cancelPurchaseOrder,
   createPurchaseOrder,
+  getPurchaseOrder,
+  listPurchaseOrders,
   createSupplier,
   getSupplier,
   listSuppliers,
@@ -204,6 +206,32 @@ describe('drafting a purchase order', () => {
       'changing the rate would rewrite the cost basis of stock received against it',
     );
     await assert.rejects(() => sendPurchaseOrder(draft.id), /already sent/);
+  });
+});
+
+describe('order totals', () => {
+  it('agree between the list and the detail, to the cent', async () => {
+    // Line totals that do not land on a whole cent: 3 x 1.1650 is 3.495 each.
+    // Rounding each line gives 3.50 + 3.50 = 7.00; summing first and rounding
+    // once gives 6.99. The list used to do the latter and the detail the former,
+    // so the same order showed two different totals depending on the screen.
+    const order = await createPurchaseOrder({
+      supplierId,
+      orderDate: '2026-09-02',
+      fxRate: '12.400000',
+      lines: [
+        { partId: brakePadId, quantityOrdered: 3, unitCostUsd: '1.1650' },
+        { partId: brakePadId, quantityOrdered: 3, unitCostUsd: '1.1650' },
+      ],
+      status: 'sent',
+    });
+
+    const detail = await getPurchaseOrder(order.id);
+    const [summary] = (await listPurchaseOrders({ supplierId })).filter((o) => o.id === order.id);
+
+    assert.equal(detail.totalUsd, '7.00', 'each line rounded, as a supplier invoice adds up');
+    assert.equal(summary!.totalUsd, detail.totalUsd, 'the list must agree with the detail');
+    assert.equal(summary!.totalGhs, detail.totalGhs);
   });
 });
 

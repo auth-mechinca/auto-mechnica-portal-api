@@ -191,7 +191,12 @@ export async function listPurchaseOrders(
       supplierId: suppliers.id,
       supplierName: suppliers.name,
       lineCount: sql<number>`count(${purchaseOrderLines.id})::int`,
-      totalUsd: sql<string>`coalesce(sum(${purchaseOrderLines.quantityOrdered} * ${purchaseOrderLines.unitCostUsd}), 0)::text`,
+      // Each line is rounded to cents before summing, exactly as
+      // getPurchaseOrder does and as adding up a supplier's printed line totals
+      // would. Summing the raw products and rounding once at the end can land a
+      // cent away, which would show the same order two different totals
+      // depending on whether you were looking at the list or the detail.
+      totalUsd: sql<string>`coalesce(sum(round(${purchaseOrderLines.quantityOrdered} * ${purchaseOrderLines.unitCostUsd}, 2)), 0)::text`,
     })
     .from(purchaseOrders)
     .innerJoin(suppliers, eq(suppliers.id, purchaseOrders.supplierId))
@@ -208,7 +213,7 @@ export async function listPurchaseOrders(
     status: row.status,
     lineCount: row.lineCount,
     fxRate: row.fxRate,
-    totalUsd: multiply(row.totalUsd, '1'),
+    totalUsd: row.totalUsd,
     totalGhs: row.fxRate === null ? null : multiply(row.totalUsd, row.fxRate),
   }));
 }
